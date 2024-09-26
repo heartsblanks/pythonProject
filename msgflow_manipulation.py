@@ -10,7 +10,7 @@ increment_tracker = {}
 name_increment_tracker = {}  # Tracks names and IDs for all elements.
 group_name_tracker = {}  # Tracker for group names
 
-# Method to find and read all .msgflow files in the given directory
+
 def find_and_read_msgflow_files(directory):
     msgflow_files = glob.glob(os.path.join(directory, '**', '*.msgflow'), recursive=True)
     print(f"Found {len(msgflow_files)} .msgflow files in {directory}")
@@ -21,7 +21,7 @@ def find_and_read_msgflow_files(directory):
     else:
         print(f"No .msgflow files found in {directory}")
 
-# Method to read each .msgflow file and process its content
+
 def read_msgflow_file(file_path):
     print(f"\nProcessing msgflow file: {file_path}")
     try:
@@ -49,7 +49,7 @@ def read_msgflow_file(file_path):
     except Exception as e:
         print(f"Error reading file {file_path}: {e}")
 
-# Method to extract namespaces from the XML content
+
 def extract_namespaces(xml_content):
     namespace_pattern = r'xmlns:([^=]+)="([^"]+)"'
     namespaces = {}
@@ -58,7 +58,7 @@ def extract_namespaces(xml_content):
         namespaces[prefix] = uri
     return namespaces
 
-# Method to find subflow nodes and accumulate necessary data for modification
+
 def find_subflow_nodes(root, namespaces, original_file_path, msgflow_content, eStructuralFeatures_accum, property_descriptor_accum, attribute_links_accum):
     subflow_found = False
     for node in root.findall(".//composition/nodes"):
@@ -86,7 +86,7 @@ def find_subflow_nodes(root, namespaces, original_file_path, msgflow_content, eS
     if not subflow_found:
         print("No subflow nodes found in this msgflow file.")
 
-# Method to read subflow files and return its content as an ElementTree
+
 def read_subflow_file(file_path):
     print(f"Reading subflow file: {file_path}")
     if not os.path.exists(file_path):
@@ -100,7 +100,7 @@ def read_subflow_file(file_path):
         print(f"Error reading subflow file {file_path}: {e}")
         return None
 
-# Method to extract eStructuralFeatures from subflow data
+
 def extract_eStructuralFeatures(subflow_data):
     extracted_features = []
     for feature in subflow_data.findall(".//eClassifiers/eStructuralFeatures"):
@@ -108,7 +108,8 @@ def extract_eStructuralFeatures(subflow_data):
     print(f"Extracted {len(extracted_features)} eStructuralFeatures from subflow.")
     return extracted_features
 
-# Method to extract property descriptors from subflow data with increment logic
+
+# Updated method to extract property descriptors with increment logic
 def extract_propertyDescriptors(subflow_data, eStructuralFeatures_data, subflow_namespace):
     extracted_property_descriptors = []
     match = re.search(r'de_it_eai_(.+)\.subflow', subflow_namespace)
@@ -185,7 +186,7 @@ def clean_propertyDescriptor(descriptor, group_name_prefix):
 
     return descriptor
 
-# Method to extract attribute links from subflow data with increment logic
+
 def extract_attributeLinks(subflow_data, eStructuralFeatures_data, subflow_namespace):
     extracted_attribute_links = []
     for feature in eStructuralFeatures_data:
@@ -413,7 +414,7 @@ def create_new_msgflow(original_file_path, eStructuralFeatures_data, property_de
     except Exception as e:
         print(f"Error writing new msgflow: {e}")
 
-# Method to shift the X-axis position of nodes in the msgflow
+
 def shift_nodes_x_axis(root, shift_value):
     try:
         for node in root.findall(".//composition/nodes"):
@@ -426,7 +427,7 @@ def shift_nodes_x_axis(root, shift_value):
     except Exception as e:
         print(f"Error shifting node locations: {e}")
 
-# Method to insert property descriptors into the propertyOrganizer
+
 def insert_propertyDescriptor(property_organizer, new_property_desc):
     current = property_organizer
     while True:
@@ -437,6 +438,7 @@ def insert_propertyDescriptor(property_organizer, new_property_desc):
         current = last_pd
     current.append(new_property_desc)
     print(f"Inserted propertyDescriptor with describedAttribute: {new_property_desc.attrib.get('describedAttribute')}")
+
 
 # Specify your directory path for .msgflow files
 directory_path = '/Users/viniththomas/IBM/ACET12/workspace/LOGGING'
