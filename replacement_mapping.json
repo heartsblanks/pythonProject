@@ -1,0 +1,12 @@
+{
+    "STD_INPUT": {
+        "Name": "STD_ERROR_SF",
+        "de_it_eai_STD_INPUT.subflow": "de_it_eai_STD_ERROR_SF.subflow",
+        "de/it/eai/STD_INPUT.subflow": "de/it/eai/STD_ERROR_SF.subflow"
+    },
+    "STD_SAMPLE": {
+        "Name": "STD_SAMPLE",
+        "de_it_eai_STD_SAMPLE.subflow": "de_it_eai_STD_SAMPLE.subflow",
+        "de/it/eai/STD_SAMPLE.subflow": "de/it/eai/STD_SAMPLE.subflow"
+    }
+}
