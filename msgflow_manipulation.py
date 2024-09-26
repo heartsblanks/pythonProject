@@ -9,6 +9,7 @@ from Input_Node_replacement import replace_subflow_nodes
 increment_tracker = {}
 name_increment_tracker = {}  # Tracks names and IDs for all elements.
 group_name_tracker = {}  # Tracker for group names
+described_attribute_tracker = {}
 
 
 def find_and_read_msgflow_files(directory):
@@ -45,7 +46,8 @@ def read_msgflow_file(file_path):
                                property_descriptor_data_accum,
                                attribute_links_data_accum)
             if eStructuralFeatures_data_accum or property_descriptor_data_accum or attribute_links_data_accum:
-                create_new_msgflow(file_path, eStructuralFeatures_data_accum, property_descriptor_data_accum, attribute_links_data_accum, modified_content, content)
+                create_new_msgflow(file_path, eStructuralFeatures_data_accum, property_descriptor_data_accum,
+                                   attribute_links_data_accum, modified_content, content)
     except Exception as e:
         print(f"Error reading file {file_path}: {e}")
 
@@ -59,7 +61,9 @@ def extract_namespaces(xml_content):
     return namespaces
 
 
-def find_subflow_nodes(root, namespaces, original_file_path, msgflow_content, eStructuralFeatures_accum, property_descriptor_accum, attribute_links_accum):
+# Modify the find_subflow_nodes function to call process_subflow_data
+def find_subflow_nodes(root, namespaces, original_file_path, msgflow_content, eStructuralFeatures_accum,
+                       property_descriptor_accum, attribute_links_accum):
     subflow_found = False
     for node in root.findall(".//composition/nodes"):
         node_type = node.attrib.get('{http://www.omg.org/XMI}type', '')
@@ -74,10 +78,11 @@ def find_subflow_nodes(root, namespaces, original_file_path, msgflow_content, eS
                 print(f"Full subflow path: {full_subflow_path}")
                 subflow_data = read_subflow_file(full_subflow_path)
                 if subflow_data is not None:
-                    eStructuralFeatures_data = extract_eStructuralFeatures(subflow_data)
-                    property_descriptor_data = extract_propertyDescriptors(subflow_data, eStructuralFeatures_data, subflow_namespace)
-                    attribute_links_data = extract_attributeLinks(subflow_data, eStructuralFeatures_data, subflow_file_path)
+                    # Use process_subflow_data to get incremented data
+                    eStructuralFeatures_data, property_descriptor_data, attribute_links_data = process_subflow_data(
+                        subflow_data, subflow_namespace, subflow_file_path)
 
+                    # Accumulate the processed data
                     eStructuralFeatures_accum.extend(eStructuralFeatures_data)
                     property_descriptor_accum.extend(property_descriptor_data)
                     attribute_links_accum.extend(attribute_links_data)
@@ -101,6 +106,22 @@ def read_subflow_file(file_path):
         return None
 
 
+def process_subflow_data(subflow_data, subflow_namespace, subflow_file_path):
+    """
+    Process eStructuralFeatures, propertyDescriptor, and attributeLinks from subflow data,
+    and perform incrementing of attributes as needed.
+    """
+    eStructuralFeatures_data = extract_eStructuralFeatures(subflow_data)
+    property_descriptor_data = extract_propertyDescriptors(subflow_data, eStructuralFeatures_data, subflow_namespace)
+    attribute_links_data = extract_attributeLinks(subflow_data, eStructuralFeatures_data, subflow_file_path)
+
+    # For each eStructuralFeature, increment and update related elements
+    for feature in eStructuralFeatures_data:
+        increment_name_and_id(feature, property_descriptor_data, attribute_links_data)
+
+    return eStructuralFeatures_data, property_descriptor_data, attribute_links_data
+
+
 def extract_eStructuralFeatures(subflow_data):
     extracted_features = []
     for feature in subflow_data.findall(".//eClassifiers/eStructuralFeatures"):
@@ -109,7 +130,6 @@ def extract_eStructuralFeatures(subflow_data):
     return extracted_features
 
 
-# Updated method to extract property descriptors with increment logic
 def extract_propertyDescriptors(subflow_data, eStructuralFeatures_data, subflow_namespace):
     extracted_property_descriptors = []
     match = re.search(r'de_it_eai_(.+)\.subflow', subflow_namespace)
@@ -166,20 +186,16 @@ def generate_unique_group_name(group_name):
 
 # Updated method to clean Property Descriptors with increment logic
 def clean_propertyDescriptor(descriptor, group_name_prefix):
+    # Set groupName directly without incrementing
     descriptor.attrib['groupName'] = group_name_prefix
-    described_attribute = descriptor.attrib.get('describedAttribute', '')
 
-    # Increment the describedAttribute to ensure uniqueness
-    if described_attribute:
-        descriptor.attrib['describedAttribute'] = increment_value(described_attribute)
-
-    # Clean child descriptors if present
+    # Remove child propertyDescriptor elements to flatten the structure
     children_to_remove = [child for child in list(descriptor) if child.tag == 'propertyDescriptor']
     for child in children_to_remove:
         descriptor.remove(child)
         print(f"Removed nested propertyDescriptor from groupName: {group_name_prefix}")
 
-    # Recursively adjust nested propertyDescriptors' group names
+    # Ensure nested propertyDescriptors have the correct groupName
     for child in descriptor.findall(".//propertyDescriptor"):
         child.attrib['groupName'] = group_name_prefix
         print(f"Updated nested propertyDescriptor groupName to: {group_name_prefix}")
@@ -195,14 +211,10 @@ def extract_attributeLinks(subflow_data, eStructuralFeatures_data, subflow_names
             print("eStructuralFeature without xmi:id found for attributeLinks, skipping.")
             continue
 
+        # Extract attributeLink matching the xmi:id
         attribute_link = subflow_data.find(f".//attributeLinks[@promotedAttribute='{xmi_id}']")
         if attribute_link is not None:
-            # Increment the promotedAttribute value to ensure uniqueness
-            promoted_attribute = attribute_link.attrib.get('promotedAttribute')
-            incremented_attribute = increment_value(promoted_attribute)
-            attribute_link.attrib['promotedAttribute'] = incremented_attribute
-
-            # Update the href attribute to match the subflow structure
+            # Only update href without incrementing promotedAttribute
             for overridden_attribute in attribute_link.findall("overriddenAttribute"):
                 href_value = overridden_attribute.attrib.get('href', '')
                 if '#' in href_value:
@@ -211,64 +223,81 @@ def extract_attributeLinks(subflow_data, eStructuralFeatures_data, subflow_names
                     overridden_attribute.attrib['href'] = new_href
                     print(f"Updated overriddenAttribute href to: {new_href}")
             extracted_attribute_links.append(attribute_link)
-            print(f"Extracted attributeLink for promotedAttribute: {incremented_attribute}")
+            print(f"Extracted attributeLink for promotedAttribute: {xmi_id}")
         else:
             print(f"No attributeLink found for promotedAttribute: {xmi_id}")
     print(f"Extracted {len(extracted_attribute_links)} attributeLinks from subflow.")
     return extracted_attribute_links
 
 # Method to increment name and ID attributes of a feature
-def increment_name_and_id(feature):
+def increment_name_and_id(feature, property_descriptor_data, attribute_links_data):
+    """
+    Increments the name and ID of eStructuralFeatures and updates corresponding
+    propertyDescriptor and attributeLink entries if the count is greater than 0.
+    """
     name = feature.attrib.get('name')
-    if name in name_increment_tracker:
-        count = name_increment_tracker[name] + 1
-        name_increment_tracker[name] = count
-    else:
-        count = 0
-        name_increment_tracker[name] = count
-    # Check recursively until a unique name and ID is found
-    while f"{name}{count}" in name_increment_tracker.values():
-        count += 1
-    feature.attrib['name'] = f"{name}{count}"
     xmi_id = feature.attrib.get('{http://www.omg.org/XMI}id')
-    if xmi_id:
-        feature.attrib['{http://www.omg.org/XMI}id'] = f"{xmi_id}.{count}"
-    name_increment_tracker[feature.attrib['name']] = count
+
+    # Separate base name and numeric suffix
+    match = re.match(r"(.+?)(\d*)$", name)
+    if match:
+        base_name, num = match.groups()
+        num = int(num) if num else 0
+    else:
+        base_name, num = name, 0
+
+    # Initialize count in tracker if not present
+    if base_name not in name_increment_tracker:
+        name_increment_tracker[base_name] = 0
+    else:
+        name_increment_tracker[base_name] += 1
+
+    # Get current count from tracker
+    current_count = name_increment_tracker[base_name]
+
+    # Only increment if current_count is greater than 0
+    if current_count > 0:
+        feature.attrib['name'] = f"{base_name}{current_count}"
+        if xmi_id:
+            feature.attrib['{http://www.omg.org/XMI}id'] = f"Property.{base_name}{current_count}"
+            modified_id = f"Property.{base_name}{current_count}"
+
+
+
+            # Update related propertyDescriptor and attributeLink elements using this count
+        update_related_elements(xmi_id, current_count, property_descriptor_data, attribute_links_data, modified_id)
+
+
+def update_related_elements(original_id, count, property_descriptor_data, attribute_links_data, modified_id):
+    """
+    Updates propertyDescriptor and attributeLink elements with the incremented count.
+    """
+    # Update propertyDescriptor entries
+    for prop_desc in property_descriptor_data:
+        described_attribute = prop_desc.attrib.get('describedAttribute')
+        if described_attribute == original_id:
+            # Increment describedAttribute and related propertyName key
+            prop_desc.attrib['describedAttribute'] = f"{modified_id}"
+            for property_name in prop_desc.findall('propertyName'):
+                key = property_name.attrib.get('key')
+                if key:
+                    property_name.attrib['key'] = f"{modified_id}"
+            print(f"Updated propertyDescriptor for describedAttribute: {prop_desc.attrib['describedAttribute']}")
+
+    # Update attributeLink entries
+    for attr_link in attribute_links_data:
+        promoted_attribute = attr_link.attrib.get('promotedAttribute')
+        if promoted_attribute == original_id:
+            # Increment promotedAttribute
+            attr_link.attrib['promotedAttribute'] = f"{modified_id}"
+            for overridden_attribute in attr_link.findall('overriddenAttribute'):
+                href = overridden_attribute.get('href')
+                href_first_part = href.split('#')[0]
+                overridden_attribute.attrib['href'] = f"{href_first_part}#{original_id}"
+            print(f"Updated attributeLink for promotedAttribute: {attr_link.attrib['promotedAttribute']}")
 
 # Method to increment attributes in property descriptors to ensure uniqueness
-def increment_propertyDescriptor(property_desc):
-    described_attribute = property_desc.attrib.get('describedAttribute')
-    if described_attribute:
-        incremented_value = increment_value(described_attribute)
-        property_desc.attrib['describedAttribute'] = incremented_value
 
-        for property_name in property_desc.findall('propertyName'):
-            key = property_name.attrib.get('key')
-            if key:
-                property_name.attrib['key'] = f"{key}.{incremented_value}"
-        name_increment_tracker[property_desc.attrib['describedAttribute']] = incremented_value
-
-# Method to increment attributes in attribute links to ensure uniqueness
-def increment_attributeLinks(attribute_link):
-    promoted_attribute = attribute_link.attrib.get('promotedAttribute')
-    if promoted_attribute:
-        incremented_value = increment_value(promoted_attribute)
-        attribute_link.attrib['promotedAttribute'] = incremented_value
-        name_increment_tracker[attribute_link.attrib['promotedAttribute']] = incremented_value
-
-# Increment function to handle unique naming
-def increment_value(base_value):
-    incremented_value = base_value
-    while incremented_value in increment_tracker:
-        match = re.match(r"(.+?)(\d*)$", incremented_value)
-        if match:
-            base, num = match.groups()
-            if num:
-                incremented_value = f"{base}{int(num) + 1}"
-            else:
-                incremented_value = f"{base}1"
-    increment_tracker[incremented_value] = True
-    return incremented_value
 
 
 def update_ecore_package_content(msgflow_content, json_filepath='replacement_mapping.json'):
@@ -335,84 +364,119 @@ def update_namespaces_with_replacements(namespaces):
 # Main method to create new msgflow with the updated logic
 def create_new_msgflow(original_file_path, eStructuralFeatures_data, property_descriptor_data, attribute_links_data,
                        msgflow_content, unmodified_content):
+    """
+    Creates a new msgflow file based on the original content and the accumulated eStructuralFeatures,
+    propertyDescriptors, and attributeLinks data.
+    """
     print(f"Creating new msgflow based on {original_file_path}")
 
+    # Parse the modified msgflow content into an XML tree
     new_msgflow = ET.fromstring(msgflow_content)
 
+    # Extract and update namespaces as needed
     namespaces = extract_namespaces(msgflow_content)
-
     namespaces = update_namespaces_with_replacements(namespaces)
     for prefix, uri in namespaces.items():
         ET.register_namespace(prefix, uri)
 
+    # Find all eClassifiers in the msgflow
     classifiers = new_msgflow.findall(".//eClassifiers")
 
     for classifier in classifiers:
+        # Directly insert the eStructuralFeatures data
         existing_features = classifier.findall("eStructuralFeatures")
         if existing_features:
+            # Insert after the last existing feature
             last_feature = existing_features[-1]
             last_index = list(classifier).index(last_feature)
             print(f"Inserting {len(eStructuralFeatures_data)} eStructuralFeatures after index {last_index}")
             for feature in eStructuralFeatures_data:
-                increment_name_and_id(feature)
+                # No need to increment as it's already processed
                 classifier.insert(last_index + 1, feature)
                 last_index += 1
                 print(f"Inserted eStructuralFeature with xmi:id: {feature.attrib.get('xmi:id')}")
         else:
+            # If no existing eStructuralFeatures, insert after eSuperTypes or at the end
             eSuperTypes_elem = classifier.find("eSuperTypes")
             if eSuperTypes_elem is not None:
                 index = list(classifier).index(eSuperTypes_elem)
                 print(f"Inserting eStructuralFeatures after eSuperTypes at index {index}")
                 for feature in eStructuralFeatures_data:
-                    increment_name_and_id(feature)
                     classifier.insert(index + 1, feature)
                     index += 1
                     print(f"Inserted eStructuralFeature with xmi:id: {feature.attrib.get('xmi:id')}")
             else:
+                # Append at the end if no eSuperTypes found
                 print("No eSuperTypes found, appending eStructuralFeatures at the end.")
                 for feature in eStructuralFeatures_data:
-                    increment_name_and_id(feature)
                     classifier.append(feature)
                     print(f"Appended eStructuralFeature with xmi:id: {feature.attrib.get('xmi:id')}")
 
+        # Handle propertyDescriptor insertion inside propertyOrganizer
         property_organizer = classifier.find(".//propertyOrganizer")
         if property_organizer is None:
             property_organizer = ET.SubElement(classifier, "propertyOrganizer")
             print("Created new propertyOrganizer element.")
 
         for property_desc in property_descriptor_data:
-            increment_propertyDescriptor(property_desc)
+            # Directly insert without incrementing
             insert_propertyDescriptor(property_organizer, property_desc)
 
+        # Handle attributeLink insertion
         for attribute_link in attribute_links_data:
-            increment_attributeLinks(attribute_link)
+            # Directly append attributeLinks
             classifier.append(attribute_link)
             print("Appended attributeLink to eClassifiers.")
 
+    # Shift the X-axis position of nodes to avoid overlap (if required)
     shift_nodes_x_axis(new_msgflow, 200)
 
+    # Save the new msgflow file
     new_file_path = original_file_path.replace(".msgflow", "_new.msgflow")
     print(f"Saving new msgflow to: {new_file_path}")
 
     try:
+        # Convert the modified ElementTree to a string
         xml_string = ET.tostring(new_msgflow, encoding='utf-8').decode('utf-8')
+
+        # Retain the original namespace declarations for <ecore:EPackage>
         start_index = unmodified_content.find('<ecore:EPackage') + len('<ecore:EPackage')
         end_index = unmodified_content.find('>', start_index)
         original_namespace_declaration = unmodified_content[start_index:end_index + 1]
 
+        # Replace the <ecore:EPackage> tag with the original namespace declaration
         start_tag_index = xml_string.find('<ecore:EPackage') + len('<ecore:EPackage')
         end_tag_index = xml_string.find('>', start_tag_index)
         new_string = xml_string[:start_tag_index] + original_namespace_declaration + xml_string[end_tag_index + 1:]
 
+        # Add the correct XML declaration at the start
         xml_declaration = '<?xml version="1.0" encoding="UTF-8"?>\n'
         final_content = xml_declaration + new_string
+
+        # Update <ecore:EPackage> with replacements before saving the file
         updated_msgflow_content = update_ecore_package_content(final_content)
 
+        # Write the final content to the file
         with open(new_file_path, 'w', encoding='utf-8') as file:
             file.write(updated_msgflow_content)
         print(f"Successfully created new msgflow at: {new_file_path}")
     except Exception as e:
         print(f"Error writing new msgflow: {e}")
+
+
+def insert_propertyDescriptor(property_organizer, new_property_desc):
+    """
+    Inserts the new_property_desc into the propertyOrganizer element.
+    """
+    current = property_organizer
+    while True:
+        last_pd = current.findall("propertyDescriptor")
+        if not last_pd:
+            break
+        last_pd = last_pd[-1]
+        current = last_pd
+    current.append(new_property_desc)
+    print(f"Inserted propertyDescriptor with describedAttribute: {new_property_desc.attrib.get('describedAttribute')}")
 
 
 def shift_nodes_x_axis(root, shift_value):
