@@ -1,0 +1,24 @@
+{
+  "input_node": {
+    "namespace": "ComIbmMQInput.msgnode",
+    "node": {
+      "xmi_type": "ComIbmMQInput.msgnode:FCMComposite_1",
+      "translation": "MQ Input",
+      "location": "12,222"
+    },
+    "connections": [
+      {
+        "sourceTerminalName": "OutTerminal.failure",
+        "targetTerminalName": "InTerminal.Input"
+      },
+      {
+        "sourceTerminalName": "OutTerminal.out",
+        "targetTerminalName": "InTerminal.Input1"
+      },
+      {
+        "sourceTerminalName": "OutTerminal.catch",
+        "targetTerminalName": "InTerminal.Input2"
+      }
+    ]
+  }
+}
