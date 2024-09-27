@@ -71,6 +71,7 @@ def find_subflow_nodes(root, namespaces, original_file_path, msgflow_content, eS
             subflow_found = True
             subflow_namespace = node_type.split(':')[0]
             subflow_file_path = namespaces.get(subflow_namespace)
+            subflow_node_id = node.attrib.get('{http://www.omg.org/XMI}id', '')
 
             if subflow_file_path:
                 full_subflow_path = os.path.join('/Users/viniththomas/IBM/ACET12/workspace/STD_MFP', subflow_file_path)
@@ -80,7 +81,7 @@ def find_subflow_nodes(root, namespaces, original_file_path, msgflow_content, eS
                 if subflow_data is not None:
                     # Use process_subflow_data to get incremented data
                     eStructuralFeatures_data, property_descriptor_data, attribute_links_data = process_subflow_data(
-                        subflow_data, subflow_namespace, subflow_file_path)
+                        subflow_data, subflow_namespace, subflow_file_path, subflow_node_id)
 
                     # Accumulate the processed data
                     eStructuralFeatures_accum.extend(eStructuralFeatures_data)
@@ -106,14 +107,14 @@ def read_subflow_file(file_path):
         return None
 
 
-def process_subflow_data(subflow_data, subflow_namespace, subflow_file_path):
+def process_subflow_data(subflow_data, subflow_namespace, subflow_file_path, subflow_node_id):
     """
     Process eStructuralFeatures, propertyDescriptor, and attributeLinks from subflow data,
     and perform incrementing of attributes as needed.
     """
     eStructuralFeatures_data = extract_eStructuralFeatures(subflow_data)
     property_descriptor_data = extract_propertyDescriptors(subflow_data, eStructuralFeatures_data, subflow_namespace)
-    attribute_links_data = extract_attributeLinks(subflow_data, eStructuralFeatures_data, subflow_file_path)
+    attribute_links_data = extract_attributeLinks(subflow_data, eStructuralFeatures_data, subflow_file_path, subflow_node_id)
 
     # For each eStructuralFeature, increment and update related elements
     for feature in eStructuralFeatures_data:
@@ -203,7 +204,7 @@ def clean_propertyDescriptor(descriptor, group_name_prefix):
     return descriptor
 
 
-def extract_attributeLinks(subflow_data, eStructuralFeatures_data, subflow_namespace):
+def extract_attributeLinks(subflow_data, eStructuralFeatures_data, subflow_file_path, subflow_node_id):
     extracted_attribute_links = []
     for feature in eStructuralFeatures_data:
         xmi_id = feature.attrib.get('{http://www.omg.org/XMI}id')
@@ -219,7 +220,7 @@ def extract_attributeLinks(subflow_data, eStructuralFeatures_data, subflow_names
                 href_value = overridden_attribute.attrib.get('href', '')
                 if '#' in href_value:
                     href_property = href_value.split('#')[-1]
-                    new_href = f"{subflow_namespace}#{href_property}"
+                    new_href = f"{subflow_file_path}#{href_property}"
                     overridden_attribute.attrib['href'] = new_href
                     print(f"Updated overriddenAttribute href to: {new_href}")
             extracted_attribute_links.append(attribute_link)
