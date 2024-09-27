@@ -33,6 +33,10 @@ def read_msgflow_file(file_path):
             namespaces = update_namespaces_with_replacements(namespaces)
             for prefix, uri in namespaces.items():
                 ET.register_namespace(prefix, uri)
+
+            # Initialize name_increment_tracker with existing names in the msgflow
+            initialize_name_increment_tracker(root)
+
             # Call the subflow replacement function here
             replace_subflow_nodes(root)
             # Convert the modified root back to a string to use in create_new_msgflow
@@ -50,6 +54,54 @@ def read_msgflow_file(file_path):
                                    attribute_links_data_accum, modified_content, content)
     except Exception as e:
         print(f"Error reading file {file_path}: {e}")
+
+
+def initialize_name_increment_tracker(root):
+    """
+    Initialize the name_increment_tracker with existing names in the msgflow.
+    Ensures that names and IDs already present in the msgflow are accounted for.
+    """
+    # Extract eStructuralFeatures names and IDs
+    for feature in root.findall(".//eClassifiers/eStructuralFeatures"):
+        name = feature.attrib.get('name')
+        if name:
+            # Separate base name and numeric suffix
+            match = re.match(r"(.+?)(\d*)$", name)
+            if match:
+                base_name, num = match.groups()
+                num = int(num) if num else 0
+                # Update tracker with the max count
+                if base_name in name_increment_tracker:
+                    name_increment_tracker[base_name] = max(name_increment_tracker[base_name], num)
+                else:
+                    name_increment_tracker[base_name] = num
+
+    # Similarly, extract and initialize for propertyDescriptors and attributeLinks if needed
+    for prop_desc in root.findall(".//propertyDescriptor"):
+        described_attribute = prop_desc.attrib.get('describedAttribute')
+        if described_attribute:
+            match = re.match(r"(.+?)(\d*)$", described_attribute)
+            if match:
+                base_name, num = match.groups()
+                num = int(num) if num else 0
+                if base_name in name_increment_tracker:
+                    name_increment_tracker[base_name] = max(name_increment_tracker[base_name], num)
+                else:
+                    name_increment_tracker[base_name] = num
+
+    for attr_link in root.findall(".//attributeLinks"):
+        promoted_attribute = attr_link.attrib.get('promotedAttribute')
+        if promoted_attribute:
+            match = re.match(r"(.+?)(\d*)$", promoted_attribute)
+            if match:
+                base_name, num = match.groups()
+                num = int(num) if num else 0
+                if base_name in name_increment_tracker:
+                    name_increment_tracker[base_name] = max(name_increment_tracker[base_name], num)
+                else:
+                    name_increment_tracker[base_name] = num
+
+    print(f"Initialized name_increment_tracker: {name_increment_tracker}")
 
 
 def extract_namespaces(xml_content):
@@ -205,31 +257,71 @@ def clean_propertyDescriptor(descriptor, group_name_prefix):
 
 
 def extract_attributeLinks(subflow_data, eStructuralFeatures_data, subflow_file_path, subflow_node_id):
+    """
+    Extracts attributeLinks from subflow data for each eStructuralFeature.
+    If the attributeLink is not found and the property name is not in the not allowed list,
+    constructs the attributeLinks dynamically.
+    """
+    # Load the not allowed property names from a JSON file
+    with open('property_names.json', 'r') as file:
+        property_data = json.load(file)
+        not_allowed_properties = property_data.get("property_names", [])
+
     extracted_attribute_links = []
+
     for feature in eStructuralFeatures_data:
         xmi_id = feature.attrib.get('{http://www.omg.org/XMI}id')
-        if not xmi_id:
-            print("eStructuralFeature without xmi:id found for attributeLinks, skipping.")
-            continue
+        feature_name = feature.attrib.get('name')
 
         # Extract attributeLink matching the xmi:id
         attribute_link = subflow_data.find(f".//attributeLinks[@promotedAttribute='{xmi_id}']")
-        if attribute_link is not None:
-            # Only update href without incrementing promotedAttribute
+
+        if attribute_link is None:
+            # If attributeLink not found, check if the feature name is in the not allowed property list
+            if feature_name not in not_allowed_properties:
+                # If the feature name is not in the list, construct the attributeLink dynamically
+                attribute_link = create_dynamic_attribute_link(feature, subflow_file_path, subflow_node_id)
+
+        else:
+            # Update href attribute to match the subflow structure
+            attribute_link.attrib['overriddenNodes'] = subflow_node_id
             for overridden_attribute in attribute_link.findall("overriddenAttribute"):
                 href_value = overridden_attribute.attrib.get('href', '')
                 if '#' in href_value:
                     href_property = href_value.split('#')[-1]
                     new_href = f"{subflow_file_path}#{href_property}"
                     overridden_attribute.attrib['href'] = new_href
-                    print(f"Updated overriddenAttribute href to: {new_href}")
-            extracted_attribute_links.append(attribute_link)
             print(f"Extracted attributeLink for promotedAttribute: {xmi_id}")
-        else:
-            print(f"No attributeLink found for promotedAttribute: {xmi_id}")
+
+        if attribute_link is not None:
+            extracted_attribute_links.append(attribute_link)
+
     print(f"Extracted {len(extracted_attribute_links)} attributeLinks from subflow.")
     return extracted_attribute_links
 
+
+def create_dynamic_attribute_link(feature, subflow_file_path, subflow_node_id):
+    """
+    Creates a dynamic attributeLink for an eStructuralFeature that is not present in the allowed properties list.
+    """
+    xmi_id = feature.attrib.get('{http://www.omg.org/XMI}id')
+    if not xmi_id:
+        print("Cannot create attributeLink for eStructuralFeature without xmi:id.")
+        return None
+
+    # Create the root element for attributeLink
+    attribute_link = ET.Element("attributeLinks", {
+        "promotedAttribute": xmi_id,
+        "overriddenNodes": subflow_node_id
+    })
+
+    # Create an overriddenAttribute element inside the attributeLink
+    overridden_attribute = ET.SubElement(attribute_link, "overriddenAttribute", {
+        "href": f"{subflow_file_path}#{xmi_id}"
+    })
+
+    print(f"Created dynamic attributeLink for eStructuralFeature ID: {xmi_id}")
+    return attribute_link
 # Method to increment name and ID attributes of a feature
 def increment_name_and_id(feature, property_descriptor_data, attribute_links_data):
     """
@@ -423,11 +515,8 @@ def create_new_msgflow(original_file_path, eStructuralFeatures_data, property_de
             # Directly insert without incrementing
             insert_propertyDescriptor(property_organizer, property_desc)
 
-        # Handle attributeLink insertion
-        for attribute_link in attribute_links_data:
-            # Directly append attributeLinks
-            classifier.append(attribute_link)
-            print("Appended attributeLink to eClassifiers.")
+        # Insert attributeLink elements directly after propertyOrganizer
+        insert_attribute_links_after_property_organizer(classifier, property_organizer, attribute_links_data)
 
     # Shift the X-axis position of nodes to avoid overlap (if required)
     shift_nodes_x_axis(new_msgflow, 200)
@@ -463,6 +552,21 @@ def create_new_msgflow(original_file_path, eStructuralFeatures_data, property_de
         print(f"Successfully created new msgflow at: {new_file_path}")
     except Exception as e:
         print(f"Error writing new msgflow: {e}")
+
+
+def insert_attribute_links_after_property_organizer(classifier, property_organizer, attribute_links_data):
+    """
+    Inserts the attributeLinks elements directly after the propertyOrganizer element in the classifier.
+    Ensures that each attributeLink is formatted correctly.
+    """
+    # Find the index of the propertyOrganizer
+    property_organizer_index = list(classifier).index(property_organizer)
+
+    # Insert each attributeLink element directly after the propertyOrganizer
+    for link in attribute_links_data:
+        property_organizer_index += 1
+        classifier.insert(property_organizer_index, link)
+        print(f"Inserted attributeLink with promotedAttribute: {link.attrib.get('promotedAttribute')}")
 
 
 def insert_propertyDescriptor(property_organizer, new_property_desc):
@@ -503,7 +607,19 @@ def insert_propertyDescriptor(property_organizer, new_property_desc):
         current = last_pd
     current.append(new_property_desc)
     print(f"Inserted propertyDescriptor with describedAttribute: {new_property_desc.attrib.get('describedAttribute')}")
+from xml.dom import minidom
 
+def format_attribute_links(attribute_links):
+    """
+    Applies pretty-printing to the list of attributeLink elements.
+    Returns a list of formatted attributeLink strings.
+    """
+    formatted_links = []
+    for link in attribute_links:
+        rough_string = ET.tostring(link, encoding='utf-8').decode('utf-8')
+        reparsed = minidom.parseString(rough_string)
+        formatted_links.append(reparsed.toprettyxml())
+    return formatted_links
 
 # Specify your directory path for .msgflow files
 directory_path = '/Users/viniththomas/IBM/ACET12/workspace/LOGGING'
