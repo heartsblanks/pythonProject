@@ -59,14 +59,14 @@ def get_esql_definitions_and_calls(directory_path):
                                 begin_match = re.search(r'\bBEGIN\b', module_content[func_start:], re.IGNORECASE)
 
                                 if begin_match:
-                                    # If 'BEGIN' exists, find the matching 'END;'
+                                    # If 'BEGIN' exists, find the matching 'END;' with optional whitespace
                                     begin_pos = func_start + begin_match.start()
                                     end_match = re.search(r'\bEND\s*;\b', module_content[begin_pos:], re.IGNORECASE)
-                                    func_end = begin_pos + end_match.end() if end_match else len(module_content)
+                                    func_end = begin_pos + end_match.end() if end_match else len(content)
                                 else:
                                     # If no 'BEGIN', find the next 'CREATE FUNCTION/PROCEDURE' or 'END MODULE'
                                     next_create = next_block_pattern.search(module_content, func_start)
-                                    func_end = next_create.start() if next_create else len(module_content)
+                                    func_end = next_create.start() if next_create else len(content)
 
                                 # Extract the function/procedure body
                                 func_body = module_content[func_start:func_end]
@@ -100,10 +100,14 @@ def get_esql_definitions_and_calls(directory_path):
                             begin_match = re.search(r'\bBEGIN\b', content[start_pos:], re.IGNORECASE)
 
                             if begin_match:
-                                # Find matching 'END;' if 'BEGIN' exists
+                                # Find matching 'END;' if 'BEGIN' exists, fallback to next block or EOF
                                 begin_pos = start_pos + begin_match.start()
                                 end_match = re.search(r'\bEND\s*;\b', content[begin_pos:], re.IGNORECASE)
-                                end_pos = begin_pos + end_match.end() if end_match else len(content)
+                                if end_match:
+                                    end_pos = begin_pos + end_match.end()
+                                else:
+                                    next_match = next_block_pattern.search(content, start_pos)
+                                    end_pos = next_match.start() if next_match else len(content)
                             else:
                                 # No 'BEGIN', find next 'CREATE FUNCTION/PROCEDURE' or EOF
                                 next_match = next_block_pattern.search(content, start_pos)
