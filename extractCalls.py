@@ -31,6 +31,9 @@ def get_esql_definitions_and_calls(directory_path):
                 with open(file_path, 'r') as f:
                     content = f.read()
                     esql_data[file] = {}
+                    
+                    # Track module ranges to exclude their functions from standalone
+                    module_ranges = []
 
                     # Process modules in the file
                     for module_match in module_pattern.finditer(content):
@@ -41,6 +44,7 @@ def get_esql_definitions_and_calls(directory_path):
                         end_module_match = re.search(r'\bEND\s+MODULE\b', content[module_start:], re.IGNORECASE)
                         module_end = module_start + end_module_match.start() if end_module_match else len(content)
                         module_content = content[module_start:module_end]
+                        module_ranges.append((module_start, module_end))
 
                         # Initialize dictionary for the current module
                         esql_data[file][module_name] = {"functions": {}, "sql_statements": []}
@@ -83,12 +87,13 @@ def get_esql_definitions_and_calls(directory_path):
                                     if not message_tree_pattern.search(sql_statement) and database_sql_pattern.search(sql_statement):
                                         esql_data[file][module_name]["functions"][func_name]["sql_statements"].append(sql_statement)
                     
-                    # Process standalone functions/procedures if present
+                    # Process standalone functions/procedures outside module ranges
                     if "Standalone" not in esql_data[file]:
                         esql_data[file]["Standalone"] = {"functions": {}, "sql_statements": []}
                     for match in definition_pattern.finditer(content):
                         func_name = match.group(1)
-                        if func_name not in excluded_procedures:
+                        func_start = match.start()
+                        if func_name not in excluded_procedures and not any(start <= func_start < end for start, end in module_ranges):
                             # Start of the function/procedure body
                             start_pos = match.end()
                             # Check for 'BEGIN'
