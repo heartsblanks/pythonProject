@@ -1,3 +1,4 @@
+
 import os
 import re
 
@@ -12,7 +13,7 @@ def get_esql_definitions_and_calls(directory_path):
     call_pattern = re.compile(r'\b(\w+)\s*\(')
     
     # Set of names to exclude
-    excluded_procedures = {"CopyMessageHeaders", "CopyEntireMessage"}
+    excluded_procedures = {"CopyMessageHeaders", "CopyEntireMessage", "CARDINALITY", "COALESCE"}
 
     # Dictionary to store module definitions and calls in each file
     esql_data = {}
@@ -63,8 +64,8 @@ def get_esql_definitions_and_calls(directory_path):
 
                                 # Find all function/procedure calls within the body
                                 calls = set(call_pattern.findall(func_body))
-                                calls = [call for call in calls if call != func_name and call not in excluded_procedures]
-                                esql_data[file][module_name][func_name] = calls
+                                unique_calls = [call for call in calls if call != func_name and call not in excluded_procedures]
+                                esql_data[file][module_name][func_name] = unique_calls
                     
                     # If no modules are present, process standalone functions/procedures
                     if not esql_data[file]:
@@ -90,10 +91,10 @@ def get_esql_definitions_and_calls(directory_path):
                                 # Extract the function/procedure body
                                 body_content = content[start_pos:end_pos]
 
-                                # Identify calls within the body
+                                # Identify unique calls within the body
                                 calls = set(call_pattern.findall(body_content))
-                                calls = [call for call in calls if call != func_name and call not in excluded_procedures]
-                                esql_data[file]["Standalone"][func_name] = calls
+                                unique_calls = [call for call in calls if call != func_name and call not in excluded_procedures]
+                                esql_data[file]["Standalone"][func_name] = unique_calls
     
     return esql_data
 
