@@ -32,7 +32,7 @@ def get_esql_definitions_and_calls(directory_path):
                     content = f.read()
                     esql_data[file] = {}
 
-                    # Find all modules in the file
+                    # Process modules in the file
                     for module_match in module_pattern.finditer(content):
                         module_name = module_match.group(1)
                         
@@ -83,45 +83,45 @@ def get_esql_definitions_and_calls(directory_path):
                                     if not message_tree_pattern.search(sql_statement) and database_sql_pattern.search(sql_statement):
                                         esql_data[file][module_name]["functions"][func_name]["sql_statements"].append(sql_statement)
                     
-                    # If no modules are present, process standalone functions/procedures
-                    if not esql_data[file]:
+                    # Process standalone functions/procedures if present
+                    if "Standalone" not in esql_data[file]:
                         esql_data[file]["Standalone"] = {"functions": {}, "sql_statements": []}
-                        for match in definition_pattern.finditer(content):
-                            func_name = match.group(1)
-                            if func_name not in excluded_procedures:
-                                # Start of the function/procedure body
-                                start_pos = match.end()
-                                # Check for 'BEGIN'
-                                begin_match = re.search(r'\bBEGIN\b', content[start_pos:], re.IGNORECASE)
+                    for match in definition_pattern.finditer(content):
+                        func_name = match.group(1)
+                        if func_name not in excluded_procedures:
+                            # Start of the function/procedure body
+                            start_pos = match.end()
+                            # Check for 'BEGIN'
+                            begin_match = re.search(r'\bBEGIN\b', content[start_pos:], re.IGNORECASE)
 
-                                if begin_match:
-                                    # Find matching 'END;' if 'BEGIN' exists
-                                    begin_pos = start_pos + begin_match.start()
-                                    end_match = re.search(r'\bEND\s*;\b', content[begin_pos:], re.IGNORECASE)
-                                    end_pos = begin_pos + end_match.end() if end_match else len(content)
-                                else:
-                                    # No 'BEGIN', find next 'CREATE FUNCTION/PROCEDURE' or EOF
-                                    next_match = next_block_pattern.search(content, start_pos)
-                                    end_pos = next_match.start() if next_match else len(content)
+                            if begin_match:
+                                # Find matching 'END;' if 'BEGIN' exists
+                                begin_pos = start_pos + begin_match.start()
+                                end_match = re.search(r'\bEND\s*;\b', content[begin_pos:], re.IGNORECASE)
+                                end_pos = begin_pos + end_match.end() if end_match else len(content)
+                            else:
+                                # No 'BEGIN', find next 'CREATE FUNCTION/PROCEDURE' or EOF
+                                next_match = next_block_pattern.search(content, start_pos)
+                                end_pos = next_match.start() if next_match else len(content)
 
-                                # Extract the function/procedure body
-                                body_content = content[start_pos:end_pos]
+                            # Extract the function/procedure body
+                            body_content = content[start_pos:end_pos]
 
-                                # Identify unique calls within the body
-                                calls = set(call_pattern.findall(body_content))
-                                unique_calls = [call for call in calls if call != func_name and call not in excluded_procedures]
-                                esql_data[file]["Standalone"]["functions"][func_name] = {"calls": unique_calls, "sql_statements": []}
+                            # Identify unique calls within the body
+                            calls = set(call_pattern.findall(body_content))
+                            unique_calls = [call for call in calls if call != func_name and call not in excluded_procedures]
+                            esql_data[file]["Standalone"]["functions"][func_name] = {"calls": unique_calls, "sql_statements": []}
 
-                                # Detect SQL statements
-                                for sql_match in sql_pattern.finditer(body_content):
-                                    sql_start = sql_match.start()
-                                    # Find end of statement (up to semicolon)
-                                    sql_end = body_content.find(';', sql_start) + 1
-                                    sql_statement = body_content[sql_start:sql_end].strip()
+                            # Detect SQL statements
+                            for sql_match in sql_pattern.finditer(body_content):
+                                sql_start = sql_match.start()
+                                # Find end of statement (up to semicolon)
+                                sql_end = body_content.find(';', sql_start) + 1
+                                sql_statement = body_content[sql_start:sql_end].strip()
 
-                                    # Exclude message tree SQL statements and non-database SQL
-                                    if not message_tree_pattern.search(sql_statement) and database_sql_pattern.search(sql_statement):
-                                        esql_data[file]["Standalone"]["functions"][func_name]["sql_statements"].append(sql_statement)
+                                # Exclude message tree SQL statements and non-database SQL
+                                if not message_tree_pattern.search(sql_statement) and database_sql_pattern.search(sql_statement):
+                                    esql_data[file]["Standalone"]["functions"][func_name]["sql_statements"].append(sql_statement)
     
     return esql_data
 
