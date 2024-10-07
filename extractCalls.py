@@ -13,9 +13,9 @@ def get_esql_definitions_and_calls(directory_path):
 
     # Pattern to detect SQL operations (select, update, insert, delete)
     sql_pattern = re.compile(r'\b(PASSTHRU\s*\(\s*)?(SELECT|UPDATE|INSERT|DELETE)\b', re.IGNORECASE)
-    # Pattern to exclude message tree SQL operations and non-database FROM statements
-    message_tree_pattern = re.compile(r'\bFROM\s+\w+\s*\[.*?\]', re.IGNORECASE)
-    database_sql_pattern = re.compile(r'\bFROM\s+\w+\.\w+', re.IGNORECASE)  # Matches `schema.table` format
+    # Pattern to detect table names after FROM or JOIN (exclude message tree structures)
+    table_pattern = re.compile(r'\b(?:FROM|JOIN)\s+(\w+\.\w+)', re.IGNORECASE)
+    message_tree_pattern = re.compile(r'\bFROM\s+\w+\s*\[.*?\]', re.IGNORECASE)  # Exclude message tree
 
     # Set of names to exclude
     excluded_procedures = {"CopyMessageHeaders", "CopyEntireMessage", "CARDINALITY", "COALESCE"}
@@ -47,7 +47,7 @@ def get_esql_definitions_and_calls(directory_path):
                         module_ranges.append((module_start, module_end))
 
                         # Initialize dictionary for the current module
-                        esql_data[file][module_name] = {"functions": {}, "sql_statements": []}
+                        esql_data[file][module_name] = {"functions": {}, "sql_operations": []}
 
                         # Find all function/procedure definitions within the module
                         for func_match in definition_pattern.finditer(module_content):
@@ -74,22 +74,28 @@ def get_esql_definitions_and_calls(directory_path):
                                 # Find all function/procedure calls within the body
                                 calls = set(call_pattern.findall(func_body))
                                 unique_calls = [call for call in calls if call != func_name and call not in excluded_procedures]
-                                esql_data[file][module_name]["functions"][func_name] = {"calls": unique_calls, "sql_statements": []}
+                                esql_data[file][module_name]["functions"][func_name] = {"calls": unique_calls, "sql_operations": []}
 
-                                # Detect SQL statements within the function/procedure body
+                                # Detect SQL operations and extract operation type and table names
                                 for sql_match in sql_pattern.finditer(func_body):
-                                    sql_start = sql_match.start()
-                                    # Find end of statement (up to semicolon)
+                                    sql_type = sql_match.group(2).upper()  # Capture the SQL operation type
+                                    sql_start = sql_match.end()
                                     sql_end = func_body.find(';', sql_start) + 1
                                     sql_statement = func_body[sql_start:sql_end].strip()
 
-                                    # Exclude message tree SQL statements and non-database SQL
-                                    if not message_tree_pattern.search(sql_statement) and database_sql_pattern.search(sql_statement):
-                                        esql_data[file][module_name]["functions"][func_name]["sql_statements"].append(sql_statement)
+                                    # Exclude message tree SQL statements
+                                    if not message_tree_pattern.search(sql_statement):
+                                        # Find all table names in the SQL statement
+                                        tables = table_pattern.findall(sql_statement)
+                                        if tables:
+                                            esql_data[file][module_name]["functions"][func_name]["sql_operations"].append({
+                                                "operation": sql_type,
+                                                "tables": tables
+                                            })
                     
                     # Process standalone functions/procedures outside module ranges
                     if "Standalone" not in esql_data[file]:
-                        esql_data[file]["Standalone"] = {"functions": {}, "sql_statements": []}
+                        esql_data[file]["Standalone"] = {"functions": {}, "sql_operations": []}
                     for match in definition_pattern.finditer(content):
                         func_name = match.group(1)
                         func_start = match.start()
@@ -119,18 +125,24 @@ def get_esql_definitions_and_calls(directory_path):
                             # Identify unique calls within the body
                             calls = set(call_pattern.findall(body_content))
                             unique_calls = [call for call in calls if call != func_name and call not in excluded_procedures]
-                            esql_data[file]["Standalone"]["functions"][func_name] = {"calls": unique_calls, "sql_statements": []}
+                            esql_data[file]["Standalone"]["functions"][func_name] = {"calls": unique_calls, "sql_operations": []}
 
-                            # Detect SQL statements
+                            # Detect SQL operations
                             for sql_match in sql_pattern.finditer(body_content):
-                                sql_start = sql_match.start()
-                                # Find end of statement (up to semicolon)
+                                sql_type = sql_match.group(2).upper()  # Capture the SQL operation type
+                                sql_start = sql_match.end()
                                 sql_end = body_content.find(';', sql_start) + 1
                                 sql_statement = body_content[sql_start:sql_end].strip()
 
-                                # Exclude message tree SQL statements and non-database SQL
-                                if not message_tree_pattern.search(sql_statement) and database_sql_pattern.search(sql_statement):
-                                    esql_data[file]["Standalone"]["functions"][func_name]["sql_statements"].append(sql_statement)
+                                # Exclude message tree SQL statements
+                                if not message_tree_pattern.search(sql_statement):
+                                    # Find all table names in the SQL statement
+                                    tables = table_pattern.findall(sql_statement)
+                                    if tables:
+                                        esql_data[file]["Standalone"]["functions"][func_name]["sql_operations"].append({
+                                            "operation": sql_type,
+                                            "tables": tables
+                                        })
     
     return esql_data
 
@@ -144,5 +156,7 @@ for file, modules in esql_data.items():
         for func, func_data in data["functions"].items():
             print(f"    Function/Procedure: {func}")
             print(f"      Calls: {func_data['calls']}")
-            print(f"      SQL Statements: {func_data['sql_statements']}")
-        print(f"  SQL Statements outside functions: {data['sql_statements']}")
+            print(f"      SQL Operations:")
+            for operation in func_data['sql_operations']:
+                print(f"        - Operation: {operation['operation']}, Tables: {operation['tables']}")
+        print(f"  SQL Operations outside functions: {data['sql_operations']}")
