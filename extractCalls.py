@@ -13,8 +13,8 @@ def get_esql_definitions_and_calls(directory_path):
 
     # Pattern to detect SQL operations (select, update, insert, delete)
     sql_pattern = re.compile(r'\b(PASSTHRU\s*\(\s*)?(SELECT|UPDATE|INSERT|DELETE)\b', re.IGNORECASE)
-    # Pattern to detect table names after FROM or JOIN (exclude message tree structures)
-    table_pattern = re.compile(r'\b(?:FROM|JOIN)\s+(\w+\.\w+)', re.IGNORECASE)
+    # Pattern to detect table names after FROM or JOIN, handling any characters before `.tablename`
+    table_pattern = re.compile(r'\b(?:FROM|JOIN)\s+.*?([a-zA-Z0-9_]+)\.\w+', re.IGNORECASE)
     message_tree_pattern = re.compile(r'\bFROM\s+\w+\s*\[.*?\]', re.IGNORECASE)  # Exclude message tree
 
     # Set of names to exclude
