@@ -160,3 +160,48 @@ def get_esql_definitions_and_calls(file_content, conn, file_name, folder_name):
                     table_matches = table_pattern.findall(sql_statement)
                     for table in table_matches:
                         insert_sql_operation(conn, function_id, sql_type, table)
+                        
+                        
+@retry_on_lock
+def insert_sql_operation(conn, function_id, operation_type, table_name):
+    cursor = conn.cursor()
+    # Check if the combination of function_id, operation_type, and table_name already exists
+    cursor.execute('''
+        SELECT sql_id FROM sql_operations
+        WHERE function_id = ? AND operation_type = ? AND table_name = ?
+    ''', (function_id, operation_type, table_name))
+    result = cursor.fetchone()
+    
+    if result:
+        return result[0]  # Return the existing ID if found
+    
+    # Insert new record if it doesn't already exist
+    cursor.execute('''
+        INSERT INTO sql_operations (function_id, operation_type, table_name)
+        VALUES (?, ?, ?)
+    ''', (function_id, operation_type, table_name))
+    conn.commit()
+    return cursor.lastrowid
+
+@retry_on_lock
+def insert_call(conn, function_id, call_name):
+    cursor = conn.cursor()
+    # Check if the combination of function_id and call_name already exists
+    cursor.execute('''
+        SELECT call_id FROM calls
+        WHERE function_id = ? AND call_name = ?
+    ''', (function_id, call_name))
+    result = cursor.fetchone()
+    
+    if result:
+        return result[0]  # Return the existing ID if found
+    
+    # Insert new record if it doesn't already exist
+    cursor.execute('''
+        INSERT INTO calls (function_id, call_name)
+        VALUES (?, ?)
+    ''', (function_id, call_name))
+    conn.commit()
+    return cursor.lastrowid
+                        
+                        
