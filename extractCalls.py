@@ -1,3 +1,5 @@
+table_pattern = re.compile(r'\b(?:FROM|JOIN)\s+(?:\'?\|\|)?[^\s]*\.(\w+)', re.IGNORECASE)
+
 import os
 import re
 
