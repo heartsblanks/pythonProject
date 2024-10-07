@@ -17,9 +17,10 @@ logging.basicConfig(
 
 def create_database():
     conn = sqlite3.connect("esql_analysis.db")
+    conn.execute("PRAGMA foreign_keys = 1")  # Enable foreign key support
     cursor = conn.cursor()
     
-    # Create tables for the analysis if not exist
+    # Create tables with foreign keys
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS modules (
             module_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,7 +37,7 @@ def create_database():
             file_name TEXT,
             folder_name TEXT,
             module_id INTEGER,
-            FOREIGN KEY(module_id) REFERENCES modules(module_id),
+            FOREIGN KEY(module_id) REFERENCES modules(module_id) ON DELETE CASCADE,
             UNIQUE(function_name, file_name, folder_name, module_id)
         )
     ''')
@@ -46,7 +47,7 @@ def create_database():
             function_id INTEGER,
             operation_type TEXT,
             table_name TEXT,
-            FOREIGN KEY(function_id) REFERENCES functions(function_id),
+            FOREIGN KEY(function_id) REFERENCES functions(function_id) ON DELETE CASCADE,
             UNIQUE(function_id, operation_type, table_name)
         )
     ''')
@@ -55,7 +56,7 @@ def create_database():
             call_id INTEGER PRIMARY KEY AUTOINCREMENT,
             function_id INTEGER,
             call_name TEXT,
-            FOREIGN KEY(function_id) REFERENCES functions(function_id),
+            FOREIGN KEY(function_id) REFERENCES functions(function_id) ON DELETE CASCADE,
             UNIQUE(function_id, call_name)
         )
     ''')
@@ -77,11 +78,14 @@ table_pattern = re.compile(
 )
 
 def get_esql_definitions_and_calls(file_content, file_name, folder_name):
-    """Process the file content to gather calls and SQL operations without inserting into the database."""
+    """Process the file content to gather modules, functions, calls, and SQL operations without inserting into the database."""
+    modules_data = []
+    functions_data = []
     calls_data = []
     sql_operations_data = []
     
     # Patterns for SQL and function analysis
+    module_pattern = re.compile(r'\bCREATE\s+.*?\bMODULE\s+(\w+)\b', re.IGNORECASE)
     definition_pattern = re.compile(r'\bCREATE\s+(?:FUNCTION|PROCEDURE)\s+(\w+)\s*\(.*?\)', re.IGNORECASE)
     sql_pattern = re.compile(r'\b(PASSTHRU\s*\(\s*)?(SELECT|UPDATE|INSERT|DELETE)\b', re.IGNORECASE)
     call_pattern = re.compile(r'\b(\w+)\s*\(')
@@ -89,34 +93,47 @@ def get_esql_definitions_and_calls(file_content, file_name, folder_name):
 
     excluded_procedures = {"CopyMessageHeaders", "CopyEntireMessage", "CARDINALITY", "COALESCE"}
 
-    # Process functions/procedures
-    for func_match in definition_pattern.finditer(file_content):
-        func_name = func_match.group(1)
-        func_start = func_match.end()
-        begin_match = re.search(r'\bBEGIN\b', file_content[func_start:], re.IGNORECASE)
-        func_end = file_content.find('END;', func_start) if begin_match else len(file_content)
-        func_body = file_content[func_start:func_end]
+    # Process modules in the file content
+    for module_match in module_pattern.finditer(file_content):
+        module_name = module_match.group(1)
+        modules_data.append((module_name, file_name, folder_name))
 
-        # Capture function/procedure calls
-        calls = set(call_pattern.findall(func_body))
-        for call in calls:
-            if call not in excluded_procedures:
-                calls_data.append((func_name, call))
+        module_start = module_match.end()
+        end_module_match = re.search(r'\bEND\s+MODULE\b', file_content[module_start:], re.IGNORECASE)
+        module_end = module_start + end_module_match.start() if end_module_match else len(file_content)
+        module_content = file_content[module_start:module_end]
 
-        # Capture SQL operations
-        for sql_match in sql_pattern.finditer(func_body):
-            sql_type = sql_match.group(2).upper()
-            sql_statement = func_body[sql_match.end():func_body.find(';', sql_match.end())].strip()
-            if not message_tree_pattern.search(sql_statement):
-                # Extract the table name or function as table name
-                table_matches = table_pattern.findall(sql_statement)
-                for table in table_matches:
-                    sql_operations_data.append((func_name, sql_type, table))
+        # Process functions/procedures within the module
+        for func_match in definition_pattern.finditer(module_content):
+            func_name = func_match.group(1)
+            func_start = func_match.end()
+            begin_match = re.search(r'\bBEGIN\b', module_content[func_start:], re.IGNORECASE)
+            func_end = module_content.find('END;', func_start) if begin_match else len(module_content)
+            func_body = module_content[func_start:func_end]
+            functions_data.append((func_name, file_name, folder_name, module_name))
 
-    return calls_data, sql_operations_data
+            # Capture calls within the function/procedure
+            calls = set(call_pattern.findall(func_body))
+            for call in calls:
+                if call not in excluded_procedures:
+                    calls_data.append((func_name, call))
+
+            # Capture SQL operations
+            for sql_match in sql_pattern.finditer(func_body):
+                sql_type = sql_match.group(2).upper()
+                sql_statement = func_body[sql_match.end():func_body.find(';', sql_match.end())].strip()
+                if not message_tree_pattern.search(sql_statement):
+                    # Extract table name or function call as table name
+                    table_matches = table_pattern.findall(sql_statement)
+                    for table in table_matches:
+                        sql_operations_data.append((func_name, sql_type, table))
+
+    return modules_data, functions_data, calls_data, sql_operations_data
 
 def analyze_folder(ssh_executor, folder):
-    """Collects calls and SQL operations data for each folder without inserting into the database."""
+    """Collects modules, functions, calls, and SQL operations data for each folder without inserting into the database."""
+    folder_modules = []
+    folder_functions = []
     folder_calls = []
     folder_sql_operations = []
 
@@ -127,13 +144,17 @@ def analyze_folder(ssh_executor, folder):
     for esql_file in esql_files:
         logging.info(f"Fetching file: {esql_file}")
         file_content = read_remote_file_with_fallback(ssh_executor, esql_file)
-        calls_data, sql_operations_data = get_esql_definitions_and_calls(file_content, esql_file, folder)
+        modules_data, functions_data, calls_data, sql_operations_data = get_esql_definitions_and_calls(file_content, esql_file, folder)
+        folder_modules.extend(modules_data)
+        folder_functions.extend(functions_data)
         folder_calls.extend(calls_data)
         folder_sql_operations.extend(sql_operations_data)
 
-    return folder_calls, folder_sql_operations
+    return folder_modules, folder_functions, folder_calls, folder_sql_operations
 
 def main():
+    all_modules = []
+    all_functions = []
     all_calls = []
     all_sql_operations = []
 
@@ -142,13 +163,23 @@ def main():
         with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = [executor.submit(analyze_folder, ssh_executor, folder) for folder in folders]
             for future in concurrent.futures.as_completed(futures):
-                folder_calls, folder_sql_operations = future.result()
+                folder_modules, folder_functions, folder_calls, folder_sql_operations = future.result()
+                all_modules.extend(folder_modules)
+                all_functions.extend(folder_functions)
                 all_calls.extend(folder_calls)
                 all_sql_operations.extend(folder_sql_operations)
 
     # Bulk insert all collected data after threads finish
     conn = create_database()
     with conn:
+        # Insert unique modules and get IDs
+        unique_modules = set((module_name, file_name, folder_name) for module_name, file_name, folder_name in all_modules)
+        conn.executemany("INSERT OR IGNORE INTO modules (module_name, file_name, folder_name) VALUES (?, ?, ?)", list(unique_modules))
+
+        # Insert unique functions and retrieve function/module IDs
+        unique_functions = set((function_name, file_name, folder_name, module_name) for function_name, file_name, folder_name, module_name in all_functions)
+        conn.executemany("INSERT OR IGNORE INTO functions (function_name, file_name, folder_name, module_id) VALUES (?, ?, ?, ?)", list(unique_functions))
+
         # Insert unique calls
         unique_calls = set((function_id, call_name) for function_id, call_name in all_calls)
         conn.executemany("INSERT OR IGNORE INTO calls (function_id, call_name) VALUES (?, ?)", list(unique_calls))
