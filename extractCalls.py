@@ -6,27 +6,33 @@ def create_database():
     conn = sqlite3.connect("esql_analysis.db")
     cursor = conn.cursor()
     
-    # Create table to store SQL operations data
+    # Create table with a composite primary key to ensure uniqueness
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS sql_operations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
             file_name TEXT,
             module_name TEXT,
             function_name TEXT,
             operation_type TEXT,
             table_name TEXT,
-            call_details TEXT
+            call_details TEXT,
+            PRIMARY KEY (file_name, module_name, function_name, operation_type, table_name)
         )
     ''')
     conn.commit()
     return conn
 
-def insert_sql_operation(conn, file_name, module_name, function_name, operation_type, table_name, call_details):
+def insert_or_update_sql_operation(conn, file_name, module_name, function_name, operation_type, table_name, call_details):
     cursor = conn.cursor()
+    
+    # Use INSERT OR REPLACE to update rows with matching primary keys
     cursor.execute('''
         INSERT INTO sql_operations (file_name, module_name, function_name, operation_type, table_name, call_details)
         VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(file_name, module_name, function_name, operation_type, table_name) 
+        DO UPDATE SET
+            call_details=excluded.call_details
     ''', (file_name, module_name, function_name, operation_type, table_name, call_details))
+    
     conn.commit()
 
 def get_esql_definitions_and_calls(directory_path, conn):
@@ -89,7 +95,7 @@ def get_esql_definitions_and_calls(directory_path, conn):
                                     if not message_tree_pattern.search(sql_statement):
                                         tables = table_pattern.findall(sql_statement)
                                         for table in tables:
-                                            insert_sql_operation(conn, file, module_name, func_name, sql_type, table, unique_calls)
+                                            insert_or_update_sql_operation(conn, file, module_name, func_name, sql_type, table, unique_calls)
 
                     # Process standalone functions/procedures
                     for match in definition_pattern.finditer(content):
@@ -120,7 +126,7 @@ def get_esql_definitions_and_calls(directory_path, conn):
                                 if not message_tree_pattern.search(sql_statement):
                                     tables = table_pattern.findall(sql_statement)
                                     for table in tables:
-                                        insert_sql_operation(conn, file, "Standalone", func_name, sql_type, table, unique_calls)
+                                        insert_or_update_sql_operation(conn, file, "Standalone", func_name, sql_type, table, unique_calls)
 
 # Example usage
 directory_path = '/path/to/your/project'
