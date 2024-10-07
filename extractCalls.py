@@ -2,9 +2,9 @@ import os
 import re
 
 def get_esql_definitions_and_calls(directory_path):
-    # Pattern to identify function and procedure definitions
-    definition_pattern = re.compile(r'\bCREATE\s+(?:FUNCTION|PROCEDURE)\s+(\w+)\s*\(.*?\bBEGIN\b(.*?)\bEND\b', re.DOTALL | re.IGNORECASE)
-    # Pattern to identify function/procedure calls within BEGIN-END blocks
+    # Pattern to identify top-level function and procedure definitions
+    definition_pattern = re.compile(r'\bCREATE\s+(?:FUNCTION|PROCEDURE)\s+(\w+)\s*\(.*?\);', re.IGNORECASE)
+    # Pattern to identify function/procedure calls within definitions
     call_pattern = re.compile(r'\b(\w+)\s*\(')
     
     # Set of names to exclude
@@ -20,18 +20,22 @@ def get_esql_definitions_and_calls(directory_path):
                 file_path = os.path.join(root, file)
                 with open(file_path, 'r') as f:
                     content = f.read()
+                    esql_data[file] = {}
+                    
                     # Find all function/procedure definitions
-                    definitions = {}
                     for match in definition_pattern.finditer(content):
                         func_name = match.group(1)
                         if func_name not in excluded_procedures:
-                            block_content = match.group(2)
-                            # Find all function/procedure calls within the block
-                            calls = set(call_pattern.findall(block_content))
-                            # Exclude self-calls and known exclusions
-                            calls = [call for call in calls if call != func_name and call not in excluded_procedures]
-                            definitions[func_name] = calls
-                    esql_data[file] = definitions
+                            # Extract the body of the function/procedure by finding next semicolon
+                            start_pos = match.end()
+                            end_pos = content.find(';', start_pos)
+                            if end_pos != -1:
+                                body_content = content[start_pos:end_pos]
+                                # Find all function/procedure calls within the body
+                                calls = set(call_pattern.findall(body_content))
+                                # Exclude self-calls and known exclusions
+                                calls = [call for call in calls if call != func_name and call not in excluded_procedures]
+                                esql_data[file][func_name] = calls
     
     return esql_data
 
