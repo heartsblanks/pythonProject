@@ -1,4 +1,4 @@
-import chardet
+ import chardet
 
 def get_remote_file_encoding(ssh_executor, file_path):
     """Detect the file encoding on the remote server using `chardet`."""
@@ -73,3 +73,90 @@ def retry_on_lock(func):
                 else:
                     raise  # Re-raise for any other OperationalError
     return wrapper
+    
+    
+import re
+
+# Define the comprehensive table pattern
+table_pattern = re.compile(
+    r"""
+    \b(?:[a-zA-Z_]+\.){0,2}                       # Optional database and schema (e.g., Database.Schema.)
+    (?:
+        [a-zA-Z_][\w]*                            # Case 1: Plain table name (e.g., TableName)
+        |                                         # OR
+        [a-zA-Z_]+\s*\(\s*[^)]+\s*\)              # Case 2: Function with parameters as table name (e.g., somefunction(param))
+    )
+    \b
+    """, 
+    re.VERBOSE
+)
+
+def get_esql_definitions_and_calls(file_content, conn, file_name, folder_name):
+    logging.info(f"Analyzing file: {file_name}")
+    
+    # Patterns for SQL and function analysis
+    module_pattern = re.compile(r'\bCREATE\s+.*?\bMODULE\s+(\w+)\b', re.IGNORECASE)
+    definition_pattern = re.compile(r'\bCREATE\s+(?:FUNCTION|PROCEDURE)\s+(\w+)\s*\(.*?\)', re.IGNORECASE)
+    sql_pattern = re.compile(r'\b(PASSTHRU\s*\(\s*)?(SELECT|UPDATE|INSERT|DELETE)\b', re.IGNORECASE)
+    call_pattern = re.compile(r'\b(\w+)\s*\(')
+    message_tree_pattern = re.compile(r'\bFROM\s+\w+\s*\[.*?\]', re.IGNORECASE)
+
+    excluded_procedures = {"CopyMessageHeaders", "CopyEntireMessage", "CARDINALITY", "COALESCE"}
+
+    module_ranges = []
+    # Process modules in the file content
+    for module_match in module_pattern.finditer(file_content):
+        module_name = module_match.group(1)
+        module_start = module_match.end()
+        end_module_match = re.search(r'\bEND\s+MODULE\b', file_content[module_start:], re.IGNORECASE)
+        module_end = module_start + end_module_match.start() if end_module_match else len(file_content)
+        module_content = file_content[module_start:module_end]
+        module_ranges.append((module_start, module_end))
+
+        module_id = insert_module(conn, file_name, module_name, folder_name)
+
+        for func_match in definition_pattern.finditer(module_content):
+            func_name = func_match.group(1)
+            if func_name not in excluded_procedures:
+                func_start = func_match.end()
+                begin_match = re.search(r'\bBEGIN\b', module_content[func_start:], re.IGNORECASE)
+                func_end = module_content.find('END;', func_start) if begin_match else len(module_content)
+                func_body = module_content[func_start:func_end]
+                function_id = insert_function(conn, file_name, func_name, folder_name, module_id)
+
+                calls = set(call_pattern.findall(func_body))
+                for call in calls:
+                    if call != func_name and call not in excluded_procedures:
+                        insert_call(conn, function_id, call)
+
+                # Detect and process SQL operations
+                for sql_match in sql_pattern.finditer(func_body):
+                    sql_type = sql_match.group(2).upper()
+                    sql_statement = func_body[sql_match.end():func_body.find(';', sql_match.end())].strip()
+                    if not message_tree_pattern.search(sql_statement):
+                        # Extract the table name or function as table name
+                        table_matches = table_pattern.findall(sql_statement)
+                        for table in table_matches:
+                            insert_sql_operation(conn, function_id, sql_type, table)
+
+    # Process standalone functions/procedures
+    for match in definition_pattern.finditer(file_content):
+        func_name = match.group(1)
+        func_start = match.start()
+        if func_name not in excluded_procedures and not any(start <= func_start < end for start, end in module_ranges):
+            function_id = insert_function(conn, file_name, func_name, folder_name)
+
+            body_content = file_content[match.end():]
+            calls = set(call_pattern.findall(body_content))
+            for call in calls:
+                if call != func_name and call not in excluded_procedures:
+                    insert_call(conn, function_id, call)
+
+            for sql_match in sql_pattern.finditer(body_content):
+                sql_type = sql_match.group(2).upper()
+                sql_statement = body_content[sql_match.end():body_content.find(';', sql_match.end())].strip()
+                if not message_tree_pattern.search(sql_statement):
+                    # Extract the table name or function as table name
+                    table_matches = table_pattern.findall(sql_statement)
+                    for table in table_matches:
+                        insert_sql_operation(conn, function_id, sql_type, table)
