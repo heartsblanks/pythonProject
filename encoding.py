@@ -50,3 +50,26 @@ def read_remote_file_with_fallback(ssh_executor, file_path):
         return binary_content.decode('utf-8')
     except UnicodeDecodeError:
         return binary_content.decode('latin1', errors='replace')
+        
+        
+        
+import time
+import sqlite3
+
+def retry_on_lock(func):
+    """Retry a function if 'database is locked' error occurs."""
+    def wrapper(*args, **kwargs):
+        max_retries = 5
+        delay = 0.1  # Delay in seconds between retries
+        for attempt in range(max_retries):
+            try:
+                return func(*args, **kwargs)
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e):
+                    if attempt < max_retries - 1:
+                        time.sleep(delay)  # Wait before retrying
+                    else:
+                        raise  # Re-raise if maximum retries reached
+                else:
+                    raise  # Re-raise for any other OperationalError
+    return wrapper
