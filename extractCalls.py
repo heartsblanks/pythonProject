@@ -7,7 +7,7 @@ def get_esql_definitions_and_calls(directory_path):
     # Pattern to identify function and procedure definitions within a module
     definition_pattern = re.compile(r'\bCREATE\s+(?:FUNCTION|PROCEDURE)\s+(\w+)\s*\(.*?\)', re.IGNORECASE)
     # Pattern to identify the next CREATE or END MODULE or EOF within the module
-    next_block_pattern = re.compile(r'\b(?:CREATE|END\s+MODULE)\b', re.IGNORECASE)
+    next_block_pattern = re.compile(r'\b(?:CREATE\s+(?:FUNCTION|PROCEDURE)|END\s+MODULE)\b', re.IGNORECASE)
     # Pattern to identify function/procedure calls within a block
     call_pattern = re.compile(r'\b(\w+)\s*\(')
     
@@ -43,10 +43,22 @@ def get_esql_definitions_and_calls(directory_path):
                         for func_match in definition_pattern.finditer(module_content):
                             func_name = func_match.group(1)
                             if func_name not in excluded_procedures:
-                                # Get the body of the function/procedure
+                                # Get the start position of the function/procedure body
                                 func_start = func_match.end()
-                                next_create = next_block_pattern.search(module_content, func_start)
-                                func_end = next_create.start() if next_create else len(module_content)
+                                # Check if 'BEGIN' is in the body
+                                begin_match = re.search(r'\bBEGIN\b', module_content[func_start:], re.IGNORECASE)
+
+                                if begin_match:
+                                    # If 'BEGIN' exists, find the matching 'END;'
+                                    begin_pos = func_start + begin_match.start()
+                                    end_match = re.search(r'\bEND\s*;\b', module_content[begin_pos:], re.IGNORECASE)
+                                    func_end = begin_pos + end_match.end() if end_match else len(module_content)
+                                else:
+                                    # If no 'BEGIN', find the next 'CREATE FUNCTION/PROCEDURE' or 'END MODULE'
+                                    next_create = next_block_pattern.search(module_content, func_start)
+                                    func_end = next_create.start() if next_create else len(module_content)
+
+                                # Extract the function/procedure body
                                 func_body = module_content[func_start:func_end]
 
                                 # Find all function/procedure calls within the body
@@ -60,10 +72,22 @@ def get_esql_definitions_and_calls(directory_path):
                         for match in definition_pattern.finditer(content):
                             func_name = match.group(1)
                             if func_name not in excluded_procedures:
-                                # Extract function/procedure body
+                                # Start of the function/procedure body
                                 start_pos = match.end()
-                                next_match = next_block_pattern.search(content, start_pos)
-                                end_pos = next_match.start() if next_match else len(content)
+                                # Check for 'BEGIN'
+                                begin_match = re.search(r'\bBEGIN\b', content[start_pos:], re.IGNORECASE)
+
+                                if begin_match:
+                                    # Find matching 'END;' if 'BEGIN' exists
+                                    begin_pos = start_pos + begin_match.start()
+                                    end_match = re.search(r'\bEND\s*;\b', content[begin_pos:], re.IGNORECASE)
+                                    end_pos = begin_pos + end_match.end() if end_match else len(content)
+                                else:
+                                    # No 'BEGIN', find next 'CREATE FUNCTION/PROCEDURE' or EOF
+                                    next_match = next_block_pattern.search(content, start_pos)
+                                    end_pos = next_match.start() if next_match else len(content)
+
+                                # Extract the function/procedure body
                                 body_content = content[start_pos:end_pos]
 
                                 # Identify calls within the body
