@@ -6,33 +6,89 @@ def create_database():
     conn = sqlite3.connect("esql_analysis.db")
     cursor = conn.cursor()
     
-    # Create table with a composite primary key to ensure uniqueness
+    # Create Modules table
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS sql_operations (
-            file_name TEXT,
+        CREATE TABLE IF NOT EXISTS modules (
+            module_id INTEGER PRIMARY KEY AUTOINCREMENT,
             module_name TEXT,
-            function_name TEXT,
-            operation_type TEXT,
-            table_name TEXT,
-            call_details TEXT,
-            PRIMARY KEY (file_name, module_name, function_name, operation_type, table_name)
+            file_name TEXT,
+            UNIQUE(module_name, file_name)
         )
     ''')
+
+    # Create Functions table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS functions (
+            function_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            function_name TEXT,
+            file_name TEXT,
+            module_id INTEGER,
+            FOREIGN KEY(module_id) REFERENCES modules(module_id),
+            UNIQUE(function_name, file_name, module_id)
+        )
+    ''')
+
+    # Create SQL Operations table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS sql_operations (
+            sql_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            function_id INTEGER,
+            operation_type TEXT,
+            table_name TEXT,
+            FOREIGN KEY(function_id) REFERENCES functions(function_id),
+            UNIQUE(function_id, operation_type, table_name)
+        )
+    ''')
+
+    # Create Calls table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS calls (
+            call_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            function_id INTEGER,
+            call_name TEXT,
+            FOREIGN KEY(function_id) REFERENCES functions(function_id),
+            UNIQUE(function_id, call_name)
+        )
+    ''')
+    
     conn.commit()
     return conn
 
-def insert_or_update_sql_operation(conn, file_name, module_name, function_name, operation_type, table_name, call_details):
+def insert_module(conn, file_name, module_name):
     cursor = conn.cursor()
-    
-    # Use INSERT OR REPLACE to update rows with matching primary keys
     cursor.execute('''
-        INSERT INTO sql_operations (file_name, module_name, function_name, operation_type, table_name, call_details)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(file_name, module_name, function_name, operation_type, table_name) 
-        DO UPDATE SET
-            call_details=excluded.call_details
-    ''', (file_name, module_name, function_name, operation_type, table_name, call_details))
-    
+        INSERT OR IGNORE INTO modules (file_name, module_name)
+        VALUES (?, ?)
+    ''', (file_name, module_name))
+    conn.commit()
+    return cursor.lastrowid if cursor.lastrowid else cursor.execute(
+        "SELECT module_id FROM modules WHERE file_name = ? AND module_name = ?", (file_name, module_name)).fetchone()[0]
+
+def insert_function(conn, file_name, function_name, module_id=None):
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT OR IGNORE INTO functions (file_name, function_name, module_id)
+        VALUES (?, ?, ?)
+    ''', (file_name, function_name, module_id))
+    conn.commit()
+    return cursor.lastrowid if cursor.lastrowid else cursor.execute(
+        "SELECT function_id FROM functions WHERE file_name = ? AND function_name = ? AND module_id IS ?", 
+        (file_name, function_name, module_id)).fetchone()[0]
+
+def insert_sql_operation(conn, function_id, operation_type, table_name):
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT OR IGNORE INTO sql_operations (function_id, operation_type, table_name)
+        VALUES (?, ?, ?)
+    ''', (function_id, operation_type, table_name))
+    conn.commit()
+
+def insert_call(conn, function_id, call_name):
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT OR IGNORE INTO calls (function_id, call_name)
+        VALUES (?, ?)
+    ''', (function_id, call_name))
     conn.commit()
 
 def get_esql_definitions_and_calls(directory_path, conn):
@@ -66,6 +122,8 @@ def get_esql_definitions_and_calls(directory_path, conn):
                         module_content = content[module_start:module_end]
                         module_ranges.append((module_start, module_end))
 
+                        module_id = insert_module(conn, file, module_name)
+
                         # Find all function/procedure definitions within the module
                         for func_match in definition_pattern.finditer(module_content):
                             func_name = func_match.group(1)
@@ -82,10 +140,15 @@ def get_esql_definitions_and_calls(directory_path, conn):
                                     func_end = next_create.start() if next_create else len(content)
 
                                 func_body = module_content[func_start:func_end]
-                                calls = set(call_pattern.findall(func_body))
-                                unique_calls = ', '.join([call for call in calls if call != func_name and call not in excluded_procedures])
+                                function_id = insert_function(conn, file, func_name, module_id)
 
-                                # Detect SQL operations
+                                # Insert calls
+                                calls = set(call_pattern.findall(func_body))
+                                for call in calls:
+                                    if call != func_name and call not in excluded_procedures:
+                                        insert_call(conn, function_id, call)
+
+                                # Insert SQL operations
                                 for sql_match in sql_pattern.finditer(func_body):
                                     sql_type = sql_match.group(2).upper()
                                     sql_start = sql_match.end()
@@ -95,7 +158,7 @@ def get_esql_definitions_and_calls(directory_path, conn):
                                     if not message_tree_pattern.search(sql_statement):
                                         tables = table_pattern.findall(sql_statement)
                                         for table in tables:
-                                            insert_or_update_sql_operation(conn, file, module_name, func_name, sql_type, table, unique_calls)
+                                            insert_sql_operation(conn, function_id, sql_type, table)
 
                     # Process standalone functions/procedures
                     for match in definition_pattern.finditer(content):
@@ -114,8 +177,12 @@ def get_esql_definitions_and_calls(directory_path, conn):
                                 end_pos = next_match.start() if next_match else len(content)
 
                             body_content = content[start_pos:end_pos]
+                            function_id = insert_function(conn, file, func_name, None)
+
                             calls = set(call_pattern.findall(body_content))
-                            unique_calls = ', '.join([call for call in calls if call != func_name and call not in excluded_procedures])
+                            for call in calls:
+                                if call != func_name and call not in excluded_procedures:
+                                    insert_call(conn, function_id, call)
 
                             for sql_match in sql_pattern.finditer(body_content):
                                 sql_type = sql_match.group(2).upper()
@@ -126,10 +193,29 @@ def get_esql_definitions_and_calls(directory_path, conn):
                                 if not message_tree_pattern.search(sql_statement):
                                     tables = table_pattern.findall(sql_statement)
                                     for table in tables:
-                                        insert_or_update_sql_operation(conn, file, "Standalone", func_name, sql_type, table, unique_calls)
+                                        insert_sql_operation(conn, function_id, sql_type, table)
 
 # Example usage
 directory_path = '/path/to/your/project'
 conn = create_database()
 get_esql_definitions_and_calls(directory_path, conn)
 conn.close()
+
+CREATE VIEW IF NOT EXISTS esql_details AS
+SELECT 
+    f.file_name AS File,
+    m.module_name AS Module,
+    f.function_name AS Function,
+    o.operation_type AS OperationType,
+    o.table_name AS TableName,
+    GROUP_CONCAT(c.call_name, ', ') AS Calls
+FROM 
+    functions f
+LEFT JOIN 
+    modules m ON f.module_id = m.module_id
+LEFT JOIN 
+    sql_operations o ON f.function_id = o.function_id
+LEFT JOIN 
+    calls c ON f.function_id = c.function_id
+GROUP BY 
+    f.file_name, m.module_name, f.function_name, o.operation_type, o.table_name;
