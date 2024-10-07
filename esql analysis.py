@@ -25,7 +25,8 @@ def create_database():
             module_id INTEGER PRIMARY KEY AUTOINCREMENT,
             module_name TEXT,
             file_name TEXT,
-            UNIQUE(module_name, file_name)
+            folder_name TEXT,
+            UNIQUE(module_name, file_name, folder_name)
         )
     ''')
     cursor.execute('''
@@ -33,9 +34,10 @@ def create_database():
             function_id INTEGER PRIMARY KEY AUTOINCREMENT,
             function_name TEXT,
             file_name TEXT,
+            folder_name TEXT,
             module_id INTEGER,
             FOREIGN KEY(module_id) REFERENCES modules(module_id),
-            UNIQUE(function_name, file_name, module_id)
+            UNIQUE(function_name, file_name, folder_name, module_id)
         )
     ''')
     cursor.execute('''
@@ -57,29 +59,54 @@ def create_database():
             UNIQUE(function_id, call_name)
         )
     ''')
+
+    # Create view for consolidated data
+    cursor.execute('''
+        CREATE VIEW IF NOT EXISTS esql_details AS
+        SELECT 
+            f.folder_name AS Folder,
+            f.file_name AS File,
+            m.module_name AS Module,
+            f.function_name AS Function,
+            o.operation_type AS OperationType,
+            o.table_name AS TableName,
+            GROUP_CONCAT(c.call_name, ', ') AS Calls
+        FROM 
+            functions f
+        LEFT JOIN 
+            modules m ON f.module_id = m.module_id
+        LEFT JOIN 
+            sql_operations o ON f.function_id = o.function_id
+        LEFT JOIN 
+            calls c ON f.function_id = c.function_id
+        GROUP BY 
+            f.folder_name, f.file_name, m.module_name, f.function_name, o.operation_type, o.table_name;
+    ''')
+
     conn.commit()
     return conn
 
-def insert_module(conn, file_name, module_name):
+def insert_module(conn, file_name, module_name, folder_name):
     cursor = conn.cursor()
     cursor.execute('''
-        INSERT OR IGNORE INTO modules (file_name, module_name)
-        VALUES (?, ?)
-    ''', (file_name, module_name))
-    conn.commit()
-    return cursor.lastrowid if cursor.lastrowid else cursor.execute(
-        "SELECT module_id FROM modules WHERE file_name = ? AND module_name = ?", (file_name, module_name)).fetchone()[0]
-
-def insert_function(conn, file_name, function_name, module_id=None):
-    cursor = conn.cursor()
-    cursor.execute('''
-        INSERT OR IGNORE INTO functions (file_name, function_name, module_id)
+        INSERT OR IGNORE INTO modules (file_name, module_name, folder_name)
         VALUES (?, ?, ?)
-    ''', (file_name, function_name, module_id))
+    ''', (file_name, module_name, folder_name))
     conn.commit()
     return cursor.lastrowid if cursor.lastrowid else cursor.execute(
-        "SELECT function_id FROM functions WHERE file_name = ? AND function_name = ? AND module_id IS ?", 
-        (file_name, function_name, module_id)).fetchone()[0]
+        "SELECT module_id FROM modules WHERE file_name = ? AND module_name = ? AND folder_name = ?", 
+        (file_name, module_name, folder_name)).fetchone()[0]
+
+def insert_function(conn, file_name, function_name, folder_name, module_id=None):
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT OR IGNORE INTO functions (file_name, function_name, folder_name, module_id)
+        VALUES (?, ?, ?, ?)
+    ''', (file_name, function_name, folder_name, module_id))
+    conn.commit()
+    return cursor.lastrowid if cursor.lastrowid else cursor.execute(
+        "SELECT function_id FROM functions WHERE file_name = ? AND function_name = ? AND folder_name = ? AND module_id IS ?", 
+        (file_name, function_name, folder_name, module_id)).fetchone()[0]
 
 def insert_sql_operation(conn, function_id, operation_type, table_name):
     cursor = conn.cursor()
@@ -97,7 +124,7 @@ def insert_call(conn, function_id, call_name):
     ''', (function_id, call_name))
     conn.commit()
 
-def get_esql_definitions_and_calls(file_content, conn, file_name):
+def get_esql_definitions_and_calls(file_content, conn, file_name, folder_name):
     logging.info(f"Analyzing file: {file_name}")
     
     # Patterns for SQL and function analysis
@@ -120,7 +147,7 @@ def get_esql_definitions_and_calls(file_content, conn, file_name):
         module_content = file_content[module_start:module_end]
         module_ranges.append((module_start, module_end))
 
-        module_id = insert_module(conn, file_name, module_name)
+        module_id = insert_module(conn, file_name, module_name, folder_name)
 
         for func_match in definition_pattern.finditer(module_content):
             func_name = func_match.group(1)
@@ -129,7 +156,7 @@ def get_esql_definitions_and_calls(file_content, conn, file_name):
                 begin_match = re.search(r'\bBEGIN\b', module_content[func_start:], re.IGNORECASE)
                 func_end = module_content.find('END;', func_start) if begin_match else len(module_content)
                 func_body = module_content[func_start:func_end]
-                function_id = insert_function(conn, file_name, func_name, module_id)
+                function_id = insert_function(conn, file_name, func_name, folder_name, module_id)
 
                 calls = set(call_pattern.findall(func_body))
                 for call in calls:
@@ -149,7 +176,7 @@ def get_esql_definitions_and_calls(file_content, conn, file_name):
         func_name = match.group(1)
         func_start = match.start()
         if func_name not in excluded_procedures and not any(start <= func_start < end for start, end in module_ranges):
-            function_id = insert_function(conn, file_name, func_name, None)
+            function_id = insert_function(conn, file_name, func_name, folder_name)
 
             body_content = file_content[match.end():]
             calls = set(call_pattern.findall(body_content))
@@ -165,9 +192,12 @@ def get_esql_definitions_and_calls(file_content, conn, file_name):
                     for table in tables:
                         insert_sql_operation(conn, function_id, sql_type, table)
 
-def analyze_folder(ssh_executor, folder, conn):
+def analyze_folder(ssh_executor, folder):
     """Analyze all .esql files in a given folder on a remote server."""
     logging.info(f"Starting analysis for folder: {folder}")
+    # Each thread gets its own SQLite connection
+    conn = create_database()
+    
     try:
         command = f"find {folder} -type f -name '*.esql'"
         esql_files = ssh_executor.execute_command(command).strip().splitlines()
@@ -176,15 +206,16 @@ def analyze_folder(ssh_executor, folder, conn):
             logging.info(f"Fetching file: {esql_file}")
             command = f"cat {esql_file}"
             file_content = ssh_executor.execute_command(command)
-            get_esql_definitions_and_calls(file_content, conn, esql_file)
+            get_esql_definitions_and_calls(file_content, conn, esql_file, folder)
 
         logging.info(f"Completed analysis for folder: {folder}")
 
     except Exception as e:
         logging.error(f"Error processing folder {folder}: {e}")
+    finally:
+        conn.close()
 
 def main():
-    conn = create_database()
     hostname = "remote_server_hostname"
     private_key_path = "/path/to/private/key"
     username = "remote_user"
@@ -196,14 +227,13 @@ def main():
         logging.info(f"Found {len(folders)} folders to analyze.")
 
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [executor.submit(analyze_folder, ssh_executor, folder, conn) for folder in folders]
+            futures = [executor.submit(analyze_folder, ssh_executor, folder) for folder in folders]
             for future in concurrent.futures.as_completed(futures):
                 try:
                     future.result()
                 except Exception as e:
                     logging.error(f"Error in folder analysis task: {e}")
 
-    conn.close()
     logging.info("Esql analysis completed.")
 
 if __name__ == "__main__":
