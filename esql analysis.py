@@ -2,7 +2,11 @@ import os
 import re
 import concurrent.futures
 import sqlite3
+import time
 import logging
+import base64
+import queue
+import threading
 from ssh_executor import SSHExecutor  # Assuming SSHExecutor class is in ssh_executor.py
 
 # Set up logging
@@ -16,8 +20,10 @@ logging.basicConfig(
 )
 
 def create_database():
+    """Initialize the SQLite database and tables with foreign keys enabled."""
     conn = sqlite3.connect("esql_analysis.db")
     conn.execute("PRAGMA foreign_keys = 1")  # Enable foreign key support
+    conn.execute("PRAGMA journal_mode=WAL;")  # Enable Write-Ahead Logging mode for concurrent writes
     cursor = conn.cursor()
     
     # Create tables with foreign keys
@@ -61,135 +67,151 @@ def create_database():
         )
     ''')
     conn.commit()
-    return conn
+    conn.close()
 
-# Pattern to match table names and function calls in SQL statements
-table_pattern = re.compile(
-    r"""
-    \b(?:[a-zA-Z_]+\.){0,2}                       # Optional database and schema (e.g., Database.Schema.)
-    (?:
-        [a-zA-Z_][\w]*                            # Case 1: Plain table name (e.g., TableName)
-        |                                         # OR
-        [a-zA-Z_]+\s*\(\s*[^)]+\s*\)              # Case 2: Function with parameters as table name (e.g., somefunction(param))
-    )
-    \b
-    """, 
-    re.VERBOSE
-)
+def db_writer(queue, conn):
+    """Single-threaded function to write database operations from the queue."""
+    while True:
+        item = queue.get()
+        if item is None:  # End signal
+            break
+        try:
+            func, args = item
+            func(conn, *args)
+        except Exception as e:
+            logging.error(f"Error in db_writer: {e}")
+        queue.task_done()
 
-def get_esql_definitions_and_calls(file_content, file_name, folder_name):
-    """Process the file content to gather modules, functions, calls, and SQL operations without inserting into the database."""
-    modules_data = []
-    functions_data = []
-    calls_data = []
-    sql_operations_data = []
+def insert_module(conn, file_name, module_name, folder_name):
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT OR IGNORE INTO modules (file_name, module_name, folder_name)
+        VALUES (?, ?, ?)
+    ''', (file_name, module_name, folder_name))
+    conn.commit()
+    return cursor.lastrowid if cursor.lastrowid else cursor.execute(
+        "SELECT module_id FROM modules WHERE file_name = ? AND module_name = ? AND folder_name = ?", 
+        (file_name, module_name, folder_name)).fetchone()[0]
+
+def insert_function(conn, file_name, function_name, folder_name, module_id=None):
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT OR IGNORE INTO functions (file_name, function_name, folder_name, module_id)
+        VALUES (?, ?, ?, ?)
+    ''', (file_name, function_name, folder_name, module_id))
+    conn.commit()
+    return cursor.lastrowid if cursor.lastrowid else cursor.execute(
+        "SELECT function_id FROM functions WHERE file_name = ? AND function_name = ? AND folder_name = ? AND module_id IS ?", 
+        (file_name, function_name, folder_name, module_id)).fetchone()[0]
+
+def insert_sql_operation(conn, function_id, operation_type, table_name):
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT OR IGNORE INTO sql_operations (function_id, operation_type, table_name)
+        VALUES (?, ?, ?)
+    ''', (function_id, operation_type, table_name))
+    conn.commit()
+
+def insert_call(conn, function_id, call_name):
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT OR IGNORE INTO calls (function_id, call_name)
+        VALUES (?, ?)
+    ''', (function_id, call_name))
+    conn.commit()
+
+def get_remote_file_base64(ssh_executor, file_path):
+    """Retrieve file content from the remote server as base64 to avoid encoding issues."""
+    command = f"base64 {file_path}"
+    base64_content = ssh_executor.execute_command(command).strip()
     
-    # Patterns for SQL and function analysis
+    # Add padding if necessary
+    padding_needed = len(base64_content) % 4
+    if padding_needed:
+        base64_content += "=" * (4 - padding_needed)
+    
+    # Decode the base64 content
+    binary_content = base64.b64decode(base64_content)
+    
+    return binary_content.decode('utf-8', errors='replace')
+
+def get_esql_definitions_and_calls(file_content, db_queue, file_name, folder_name):
+    """Process the file content and add database operations to the queue."""
+    # Define patterns for modules, functions, SQL operations, and function calls
     module_pattern = re.compile(r'\bCREATE\s+.*?\bMODULE\s+(\w+)\b', re.IGNORECASE)
-    definition_pattern = re.compile(r'\bCREATE\s+(?:FUNCTION|PROCEDURE)\s+(\w+)\s*\(.*?\)', re.IGNORECASE)
+    function_pattern = re.compile(r'\bCREATE\s+(?:FUNCTION|PROCEDURE)\s+(\w+)\s*\(.*?\)', re.IGNORECASE)
     sql_pattern = re.compile(r'\b(PASSTHRU\s*\(\s*)?(SELECT|UPDATE|INSERT|DELETE)\b', re.IGNORECASE)
     call_pattern = re.compile(r'\b(\w+)\s*\(')
     message_tree_pattern = re.compile(r'\bFROM\s+\w+\s*\[.*?\]', re.IGNORECASE)
+    table_pattern = re.compile(r'\b(?:[a-zA-Z_]+\.){0,2}(?:[a-zA-Z_][\w]*|[a-zA-Z_]+\s*\(\s*[^)]+\s*\))\b', re.VERBOSE)
 
     excluded_procedures = {"CopyMessageHeaders", "CopyEntireMessage", "CARDINALITY", "COALESCE"}
 
     # Process modules in the file content
     for module_match in module_pattern.finditer(file_content):
         module_name = module_match.group(1)
-        modules_data.append((module_name, file_name, folder_name))
+        db_queue.put((insert_module, (file_name, module_name, folder_name)))
+        module_id = db_queue.put((insert_module, (file_name, module_name, folder_name)))
 
         module_start = module_match.end()
         end_module_match = re.search(r'\bEND\s+MODULE\b', file_content[module_start:], re.IGNORECASE)
         module_end = module_start + end_module_match.start() if end_module_match else len(file_content)
         module_content = file_content[module_start:module_end]
 
-        # Process functions/procedures within the module
-        for func_match in definition_pattern.finditer(module_content):
+        # Process functions within the module
+        for func_match in function_pattern.finditer(module_content):
             func_name = func_match.group(1)
-            func_start = func_match.end()
-            begin_match = re.search(r'\bBEGIN\b', module_content[func_start:], re.IGNORECASE)
-            func_end = module_content.find('END;', func_start) if begin_match else len(module_content)
-            func_body = module_content[func_start:func_end]
-            functions_data.append((func_name, file_name, folder_name, module_name))
+            function_id = db_queue.put((insert_function, (file_name, func_name, folder_name, module_id)))
 
-            # Capture calls within the function/procedure
+            func_body = module_content[func_match.end():module_content.find('END;', func_match.end())]
             calls = set(call_pattern.findall(func_body))
             for call in calls:
                 if call not in excluded_procedures:
-                    calls_data.append((func_name, call))
+                    db_queue.put((insert_call, (function_id, call)))
 
-            # Capture SQL operations
             for sql_match in sql_pattern.finditer(func_body):
                 sql_type = sql_match.group(2).upper()
                 sql_statement = func_body[sql_match.end():func_body.find(';', sql_match.end())].strip()
                 if not message_tree_pattern.search(sql_statement):
-                    # Extract table name or function call as table name
-                    table_matches = table_pattern.findall(sql_statement)
-                    for table in table_matches:
-                        sql_operations_data.append((func_name, sql_type, table))
+                    tables = table_pattern.findall(sql_statement)
+                    for table in tables:
+                        db_queue.put((insert_sql_operation, (function_id, sql_type, table)))
 
-    return modules_data, functions_data, calls_data, sql_operations_data
-
-def analyze_folder(ssh_executor, folder):
-    """Collects modules, functions, calls, and SQL operations data for each folder without inserting into the database."""
-    folder_modules = []
-    folder_functions = []
-    folder_calls = []
-    folder_sql_operations = []
-
-    # List all .esql files and process each
+def analyze_folder(ssh_executor, folder, db_queue):
+    """Analyze each file in the folder and queue data for insertion into the database."""
     command = f"find {folder} -type f -name '*.esql'"
     esql_files = ssh_executor.execute_command(command).strip().splitlines()
 
     for esql_file in esql_files:
-        logging.info(f"Fetching file: {esql_file}")
-        file_content = read_remote_file_with_fallback(ssh_executor, esql_file)
-        modules_data, functions_data, calls_data, sql_operations_data = get_esql_definitions_and_calls(file_content, esql_file, folder)
-        folder_modules.extend(modules_data)
-        folder_functions.extend(functions_data)
-        folder_calls.extend(calls_data)
-        folder_sql_operations.extend(sql_operations_data)
-
-    return folder_modules, folder_functions, folder_calls, folder_sql_operations
+        logging.info(f"Processing file: {esql_file}")
+        file_content = get_remote_file_base64(ssh_executor, esql_file)
+        get_esql_definitions_and_calls(file_content, db_queue, esql_file, folder)
 
 def main():
-    all_modules = []
-    all_functions = []
-    all_calls = []
-    all_sql_operations = []
+    # Initialize database
+    create_database()
 
-    # Set up SSH connection and thread pool
+    db_queue = queue.Queue()
+    conn = sqlite3.connect("esql_analysis.db")
+
+    # Start the db_writer thread
+    writer_thread = threading.Thread(target=db_writer, args=(db_queue, conn))
+    writer_thread.start()
+
+    # Process each folder in a separate thread
     with SSHExecutor(hostname="...", private_key_path="...") as ssh_executor:
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            futures = [executor.submit(analyze_folder, ssh_executor, folder) for folder in folders]
+            futures = [executor.submit(analyze_folder, ssh_executor, folder, db_queue) for folder in folders]
             for future in concurrent.futures.as_completed(futures):
-                folder_modules, folder_functions, folder_calls, folder_sql_operations = future.result()
-                all_modules.extend(folder_modules)
-                all_functions.extend(folder_functions)
-                all_calls.extend(folder_calls)
-                all_sql_operations.extend(folder_sql_operations)
+                try:
+                    future.result()  # Ensure any exceptions are raised
+                except Exception as e:
+                    logging.error(f"Error in thread: {e}")
 
-    # Bulk insert all collected data after threads finish
-    conn = create_database()
-    with conn:
-        # Insert unique modules and get IDs
-        unique_modules = set((module_name, file_name, folder_name) for module_name, file_name, folder_name in all_modules)
-        conn.executemany("INSERT OR IGNORE INTO modules (module_name, file_name, folder_name) VALUES (?, ?, ?)", list(unique_modules))
-
-        # Insert unique functions and retrieve function/module IDs
-        unique_functions = set((function_name, file_name, folder_name, module_name) for function_name, file_name, folder_name, module_name in all_functions)
-        conn.executemany("INSERT OR IGNORE INTO functions (function_name, file_name, folder_name, module_id) VALUES (?, ?, ?, ?)", list(unique_functions))
-
-        # Insert unique calls
-        unique_calls = set((function_id, call_name) for function_id, call_name in all_calls)
-        conn.executemany("INSERT OR IGNORE INTO calls (function_id, call_name) VALUES (?, ?)", list(unique_calls))
-
-        # Insert unique SQL operations
-        unique_sql_operations = set((function_id, operation_type, table_name) for function_id, operation_type, table_name in all_sql_operations)
-        conn.executemany("INSERT OR IGNORE INTO sql_operations (function_id, operation_type, table_name) VALUES (?, ?, ?)", list(unique_sql_operations))
-
+    # Signal the db_writer thread to stop
+    db_queue.put(None)
+    writer_thread.join()
     conn.close()
-    logging.info("Esql analysis completed.")
 
 if __name__ == "__main__":
     main()
