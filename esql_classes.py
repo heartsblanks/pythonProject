@@ -130,7 +130,7 @@ class DatabaseManager:
 
 
 class RemoteFileHandler:
-    """Handles remote file retrieval with base64 encoding and fallback."""
+    """Handles remote file retrieval with base64 encoding and fallback, and finds .esql files."""
 
     @staticmethod
     def get_remote_file_base64(ssh_executor, file_path):
@@ -151,7 +151,14 @@ class RemoteFileHandler:
             logging.error(f"Error reading {file_path} as base64: {e}")
             return ssh_executor.execute_command(f"cat {file_path}")
 
-
+    @staticmethod
+    def find_esql_files(ssh_executor, folder):
+        """Find all .esql files in the specified folder on the remote server."""
+        command = f"find {folder} -type f -name '*.esql'"
+        esql_files = ssh_executor.execute_command(command).strip().splitlines()
+        logging.info(f"Found {len(esql_files)} .esql files in {folder}")
+        return esql_files
+        
 class ESQLProcessor:
     """Parses .esql files to extract modules, functions, SQL operations, and function calls."""
 
@@ -264,9 +271,11 @@ def main():
         esql_processor = ESQLProcessor(db_queue, db_manager)
         
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            # Assuming 'folders' is a list of folders containing .esql files
-            for folder in folders:
-                executor.submit(lambda f=folder: esql_processor.process_file(file_handler.read_remote_file_with_fallback(ssh_executor, f), f, folder))
+            for folder in folders:  # 'folders' is a list of target directories on the remote server
+                esql_files = file_handler.find_esql_files(ssh_executor, folder)
+                for esql_file in esql_files:
+                    file_content = file_handler.read_remote_file_with_fallback(ssh_executor, esql_file)
+                    executor.submit(esql_processor.process_file, file_content, esql_file, folder)
 
     db_queue.put(None)  # Signal db_writer to stop
     db_writer.join()
