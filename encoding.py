@@ -203,5 +203,44 @@ def insert_call(conn, function_id, call_name):
     ''', (function_id, call_name))
     conn.commit()
     return cursor.lastrowid
-                        
+
+import queue
+import threading
+
+def db_writer(queue, conn):
+    while True:
+        item = queue.get()
+        if item is None:
+            break  # Exit if None is sent as a signal to end
+        try:
+            func, args = item
+            func(conn, *args)
+        except Exception as e:
+            logging.error(f"Error in db_writer: {e}")
+        queue.task_done()
+
+# Main function
+def main():
+    create_database()
+    db_queue = queue.Queue()
+    conn = sqlite3.connect("esql_analysis.db")
+    
+    # Start the db_writer thread
+    writer_thread = threading.Thread(target=db_writer, args=(db_queue, conn))
+    writer_thread.start()
+
+    # Analyze folders, each thread will submit inserts to the queue
+    with SSHExecutor(hostname="...", private_key_path="...") as ssh_executor:
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [executor.submit(analyze_folder, ssh_executor, folder, db_queue) for folder in folders]
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    logging.error(f"Error in thread: {e}")
+
+    # Signal the writer thread to exit
+    db_queue.put(None)
+    writer_thread.join()
+    conn.close()
                         
