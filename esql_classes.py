@@ -195,13 +195,19 @@ class ESQLProcessor:
             module_end = module_start + end_module_match.start() if end_module_match else len(file_content)
             module_content = file_content[module_start:module_end]
 
+            # Iterate over each function in the module content
             for func_match in function_pattern.finditer(module_content):
                 func_name = func_match.group(1)
                 function_id = self._queue_insert_function(file_name, func_name, folder_name, module_id)
 
-                func_body = module_content[func_match.end():module_content.find('END;', func_match.end())]
+                # Determine the end of the function body
+                func_start = func_match.end()
+                next_create_match = function_pattern.search(module_content, func_start)
+                func_end = next_create_match.start() if next_create_match else len(module_content)
+
+                func_body = module_content[func_start:func_end]
                 
-                # Extract SQL operations with the updated SQL pattern
+                # Extract SQL operations within the function body
                 for sql_match in sql_pattern.finditer(func_body):
                     sql_type = (
                         "INSERT" if sql_match.group(1) else
@@ -212,10 +218,11 @@ class ESQLProcessor:
                     table_name = sql_match.group(1) or sql_match.group(2) or sql_match.group(3) or sql_match.group(4)
                     self._queue_insert_sql_operation(function_id, sql_type, table_name)
 
-                # Extract function calls with the updated call pattern
+                # Extract function calls within the function body
                 calls = set(call_pattern.findall(func_body))
                 for call in calls:
                     self._queue_insert_call(function_id, call)
+                    
     def _queue_insert_module(self, file_name, module_name, folder_name):
         callback_event = threading.Event()
         result_container = {}
