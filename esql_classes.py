@@ -168,18 +168,23 @@ class ESQLProcessor:
 
     def process_file(self, file_content, file_name, folder_name):
         module_pattern = re.compile(r'\bCREATE\s+.*?\bMODULE\s+(\w+)\b', re.IGNORECASE)
-        function_pattern = re.compile(r'\bCREATE\s+(?:FUNCTION|PROCEDURE)\s+(\w+)\s*\(.*?\)', re.IGNORECASE)
+        
+        # Updated function pattern without case constraints, to handle multi-line function or procedure definitions
+        function_pattern = re.compile(r'\bCREATE\s+(?:FUNCTION|PROCEDURE)\s+([A-Za-z0-9_]+)\s*\(\s*', re.DOTALL)
+        
+        # Final call pattern to exclude purely uppercase names without underscores, support uppercase with underscores
+        call_pattern = re.compile(r'([A-Z]*[a-z_]+[A-Za-z0-9_]*)\(\s*', re.DOTALL)
+        
+        # Updated SQL pattern to capture complex table names for INSERT, SELECT, UPDATE, DELETE
         sql_pattern = re.compile(
             r'''
-            \bINSERT\s+INTO\s+([a-zA-Z_][\w.]*)
-            | \bSELECT\b.*?\bFROM\s+([a-zA-Z_][\w.]*)  # Match SELECT ... FROM
-            | \bUPDATE\s+([a-zA-Z_][\w.]*)             # Match UPDATE
-            | \bDELETE\s+FROM\s+([a-zA-Z_][\w.]*)      # Match DELETE FROM
+            \bINSERT\s+INTO\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)
+            | \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)
+            | \bUPDATE\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)
+            | \bDELETE\s+FROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)
             ''', 
-            re.IGNORECASE | re.VERBOSE
+            re.IGNORECASE | re.VERBOSE | re.DOTALL
         )
-        call_pattern = re.compile(r'\b(\w+)\s*\(')
-        message_tree_pattern = re.compile(r'\bFROM\s+\w+\s*\[.*?\]', re.IGNORECASE)
 
         for module_match in module_pattern.finditer(file_content):
             module_name = module_match.group(1)
@@ -195,10 +200,8 @@ class ESQLProcessor:
                 function_id = self._queue_insert_function(file_name, func_name, folder_name, module_id)
 
                 func_body = module_content[func_match.end():module_content.find('END;', func_match.end())]
-                calls = set(call_pattern.findall(func_body))
-                for call in calls:
-                    self._queue_insert_call(function_id, call)
-
+                
+                # Extract SQL operations with the updated SQL pattern
                 for sql_match in sql_pattern.finditer(func_body):
                     sql_type = (
                         "INSERT" if sql_match.group(1) else
@@ -207,9 +210,12 @@ class ESQLProcessor:
                         "DELETE"
                     )
                     table_name = sql_match.group(1) or sql_match.group(2) or sql_match.group(3) or sql_match.group(4)
-                    if table_name and not message_tree_pattern.search(table_name):
-                        self._queue_insert_sql_operation(function_id, sql_type, table_name)
+                    self._queue_insert_sql_operation(function_id, sql_type, table_name)
 
+                # Extract function calls with the updated call pattern
+                calls = set(call_pattern.findall(func_body))
+                for call in calls:
+                    self._queue_insert_call(function_id, call)
     def _queue_insert_module(self, file_name, module_name, folder_name):
         callback_event = threading.Event()
         result_container = {}
