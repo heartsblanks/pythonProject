@@ -140,10 +140,18 @@ def get_esql_definitions_and_calls(file_content, db_queue, file_name, folder_nam
     # Define patterns for modules, functions, SQL operations, and function calls
     module_pattern = re.compile(r'\bCREATE\s+.*?\bMODULE\s+(\w+)\b', re.IGNORECASE)
     function_pattern = re.compile(r'\bCREATE\s+(?:FUNCTION|PROCEDURE)\s+(\w+)\s*\(.*?\)', re.IGNORECASE)
-    sql_pattern = re.compile(r'\b(PASSTHRU\s*\(\s*)?(SELECT|UPDATE|INSERT|DELETE)\b', re.IGNORECASE)
+    sql_pattern = re.compile(
+        r'''
+        \bINSERT\s+INTO\s+([a-zA-Z_][\w.]*)
+        | \bSELECT\b.*?\bFROM\s+([a-zA-Z_][\w.]*)  # Match SELECT ... FROM
+        | \bUPDATE\s+([a-zA-Z_][\w.]*)             # Match UPDATE
+        | \bDELETE\s+FROM\s+([a-zA-Z_][\w.]*)      # Match DELETE FROM
+        ''', 
+        re.IGNORECASE | re.VERBOSE
+    )
     call_pattern = re.compile(r'\b(\w+)\s*\(')
     message_tree_pattern = re.compile(r'\bFROM\s+\w+\s*\[.*?\]', re.IGNORECASE)
-    table_pattern = re.compile(r'\b(?:[a-zA-Z_]+\.){0,2}(?:[a-zA-Z_][\w]*|[a-zA-Z_]+\s*\(\s*[^)]+\s*\))\b', re.VERBOSE)
+    table_pattern = re.compile(r'[a-zA-Z_][\w.]*')  # Matches tables, allowing optional schema prefixes
 
     excluded_procedures = {"CopyMessageHeaders", "CopyEntireMessage", "CARDINALITY", "COALESCE"}
 
@@ -172,12 +180,17 @@ def get_esql_definitions_and_calls(file_content, db_queue, file_name, folder_nam
                     db_queue.put((insert_call, (function_id, call)))
 
             for sql_match in sql_pattern.finditer(func_body):
-                sql_type = sql_match.group(2).upper()
-                sql_statement = func_body[sql_match.end():func_body.find(';', sql_match.end())].strip()
-                if not message_tree_pattern.search(sql_statement):
-                    tables = table_pattern.findall(sql_statement)
-                    for table in tables:
-                        db_queue.put((insert_sql_operation, (function_id, sql_type, table)))
+                sql_type = (
+                    "INSERT" if sql_match.group(1) else
+                    "SELECT" if sql_match.group(2) else
+                    "UPDATE" if sql_match.group(3) else
+                    "DELETE"
+                )
+                table_name = sql_match.group(1) or sql_match.group(2) or sql_match.group(3) or sql_match.group(4)
+                
+                # Ensure table_name is not a message tree reference
+                if table_name and not message_tree_pattern.search(table_name):
+                    db_queue.put((insert_sql_operation, (function_id, sql_type, table_name)))
 
     # Process standalone functions (those not within any module)
     for func_match in function_pattern.finditer(file_content):
@@ -194,12 +207,17 @@ def get_esql_definitions_and_calls(file_content, db_queue, file_name, folder_nam
                     db_queue.put((insert_call, (function_id, call)))
 
             for sql_match in sql_pattern.finditer(func_body):
-                sql_type = sql_match.group(2).upper()
-                sql_statement = func_body[sql_match.end():func_body.find(';', sql_match.end())].strip()
-                if not message_tree_pattern.search(sql_statement):
-                    tables = table_pattern.findall(sql_statement)
-                    for table in tables:
-                        db_queue.put((insert_sql_operation, (function_id, sql_type, table)))
+                sql_type = (
+                    "INSERT" if sql_match.group(1) else
+                    "SELECT" if sql_match.group(2) else
+                    "UPDATE" if sql_match.group(3) else
+                    "DELETE"
+                )
+                table_name = sql_match.group(1) or sql_match.group(2) or sql_match.group(3) or sql_match.group(4)
+                
+                # Ensure table_name is not a message tree reference
+                if table_name and not message_tree_pattern.search(table_name):
+                    db_queue.put((insert_sql_operation, (function_id, sql_type, table_name)))
 def analyze_folder(ssh_executor, folder, db_queue):
     """Analyze each file in the folder and queue data for insertion into the database."""
     command = f"find {folder} -type f -name '*.esql'"
