@@ -147,16 +147,18 @@ def get_esql_definitions_and_calls(file_content, db_queue, file_name, folder_nam
 
     excluded_procedures = {"CopyMessageHeaders", "CopyEntireMessage", "CARDINALITY", "COALESCE"}
 
+    module_ranges = []  # Track module ranges to exclude standalone processing
+
     # Process modules in the file content
     for module_match in module_pattern.finditer(file_content):
         module_name = module_match.group(1)
-        db_queue.put((insert_module, (file_name, module_name, folder_name)))
         module_id = db_queue.put((insert_module, (file_name, module_name, folder_name)))
 
         module_start = module_match.end()
         end_module_match = re.search(r'\bEND\s+MODULE\b', file_content[module_start:], re.IGNORECASE)
         module_end = module_start + end_module_match.start() if end_module_match else len(file_content)
         module_content = file_content[module_start:module_end]
+        module_ranges.append((module_start, module_end))
 
         # Process functions within the module
         for func_match in function_pattern.finditer(module_content):
@@ -177,6 +179,27 @@ def get_esql_definitions_and_calls(file_content, db_queue, file_name, folder_nam
                     for table in tables:
                         db_queue.put((insert_sql_operation, (function_id, sql_type, table)))
 
+    # Process standalone functions (those not within any module)
+    for func_match in function_pattern.finditer(file_content):
+        func_start = func_match.start()
+        # Check if function is outside any module
+        if not any(start <= func_start < end for start, end in module_ranges):
+            func_name = func_match.group(1)
+            function_id = db_queue.put((insert_function, (file_name, func_name, folder_name, None)))
+
+            func_body = file_content[func_match.end():file_content.find('END;', func_match.end())]
+            calls = set(call_pattern.findall(func_body))
+            for call in calls:
+                if call not in excluded_procedures:
+                    db_queue.put((insert_call, (function_id, call)))
+
+            for sql_match in sql_pattern.finditer(func_body):
+                sql_type = sql_match.group(2).upper()
+                sql_statement = func_body[sql_match.end():func_body.find(';', sql_match.end())].strip()
+                if not message_tree_pattern.search(sql_statement):
+                    tables = table_pattern.findall(sql_statement)
+                    for table in tables:
+                        db_queue.put((insert_sql_operation, (function_id, sql_type, table)))
 def analyze_folder(ssh_executor, folder, db_queue):
     """Analyze each file in the folder and queue data for insertion into the database."""
     command = f"find {folder} -type f -name '*.esql'"
