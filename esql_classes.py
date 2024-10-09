@@ -181,14 +181,14 @@ class ESQLProcessor:
         # Updated SQL pattern to capture complex table names for INSERT, SELECT, UPDATE, DELETE
         sql_pattern = re.compile(
     r'''
-    ^(?!.*(\*|--|/\*)).*?            # Exclude lines with *, --, or /* before the operation
+    ^(?!.*(\*|--|/\*)).*?               # Exclude lines with *, --, or /* before the operation
     (
-        \bINSERT\s+INTO\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\s+  # Match INSERT INTO with table name followed by whitespace
-        | \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)(?=\s|\)|;|,)  # Match SELECT ... FROM with table name until space, ) , or ;
-        | \bUPDATE\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\s+.*?\bSET\b  # Match UPDATE with table name followed by whitespace and SET keyword
-        | \bDELETE\s+FROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\s+  # Match DELETE FROM with table name followed by whitespace
+        \bINSERT\s+INTO\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\b     # Match INSERT INTO followed by table name
+        | \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)  # Match SELECT ... FROM with table name up to the first space, ), ;, or ,
+        | \bUPDATE\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\s+.*?\bSET\b  # Match UPDATE with table name followed by SET
+        | \bDELETE\s+FROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\b     # Match DELETE FROM followed by table name
     )
-    (?=;|\n)                           # Ensure the match stops at a semicolon or newline to capture complete statements
+    .*?;[\s]*\n                           # Match up to the end of the SQL statement
     ''', 
     re.IGNORECASE | re.VERBOSE | re.DOTALL
 )
