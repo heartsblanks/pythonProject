@@ -182,12 +182,12 @@ class ESQLProcessor:
         sql_pattern = re.compile(
     r'''
     (
-        \bINSERT\s+INTO\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\b     # Match INSERT INTO followed by table name
-        | \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)(?=\s|\)|;|,)  # Capture table name after FROM, up to space, ), ;, or ,
+        \bINSERT\s+INTO\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\b      # Match INSERT INTO followed by table name
+        | \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)(?=\s|WHERE|;|\)|,)  # Capture table name after FROM until space, WHERE, ), ;, or ,
         | \bUPDATE\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\s+.*?\bSET\b  # Match UPDATE with table name followed by SET
-        | \bDELETE\s+FROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\b     # Match DELETE FROM followed by table name
+        | \bDELETE\s+FROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\b      # Match DELETE FROM followed by table name
     )
-    .*?;[\s]*\n                           # Match up to the end of the SQL statement
+    .*?;[\s]*\n                          # Match up to the end of the SQL statement
     ''', 
     re.IGNORECASE | re.VERBOSE | re.DOTALL
 )
