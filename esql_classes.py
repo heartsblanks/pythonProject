@@ -184,7 +184,7 @@ class ESQLProcessor:
     ^(?!.*(\*|--|/\*)).*?       # Exclude lines with *, --, or /* before the operation
     (
         \bINSERT\s+INTO\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\s+  # Match INSERT INTO with table name followed by whitespace
-        | \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\s+  # Match SELECT ... FROM with table name followed by whitespace
+        | \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)(?=\s|\)|;|,)  # Match SELECT ... FROM with table name until space, ) , or ;
         | \bUPDATE\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\s+.*?\bSET\b  # Match UPDATE with table name followed by whitespace and SET keyword
         | \bDELETE\s+FROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\s+  # Match DELETE FROM with table name followed by whitespace
     )
