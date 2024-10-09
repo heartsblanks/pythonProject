@@ -177,14 +177,14 @@ class ESQLProcessor:
         
         # Updated SQL pattern to capture complex table names for INSERT, SELECT, UPDATE, DELETE
         sql_pattern = re.compile(
-            r'''
-            \bINSERT\s+INTO\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)
-            | \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)
-            | \bUPDATE\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)
-            | \bDELETE\s+FROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)
-            ''', 
-            re.IGNORECASE | re.VERBOSE | re.DOTALL
-        )
+    r'''
+    \bINSERT\s+INTO\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+).*?  # Match INSERT INTO followed by table name
+    | \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)  # Match SELECT ... FROM followed by table name
+    | \bUPDATE\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+).*?\bSET\b  # Match UPDATE followed by table name and SET keyword
+    | \bDELETE\s+FROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)  # Match DELETE FROM followed by table name
+    ''', 
+    re.IGNORECASE | re.VERBOSE | re.DOTALL
+)
 
         for module_match in module_pattern.finditer(file_content):
             module_name = module_match.group(1)
