@@ -178,12 +178,12 @@ class ESQLProcessor:
         # Updated SQL pattern to capture complex table names for INSERT, SELECT, UPDATE, DELETE
         sql_pattern = re.compile(
     r'''
-    ^(?!.*(\*|--|/\*)).*?  # Exclude lines with *, --, or /* appearing anywhere before the operation
+    ^(?!.*(\*|--|/\*)).*?   # Exclude lines with *, --, or /* before the operation
     (
-        \bINSERT\s+INTO\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+).*?  # Match INSERT INTO with table name
-        | \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)  # Match SELECT ... FROM with table name
-        | \bUPDATE\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+).*?\bSET\b  # Match UPDATE ... SET with table name
-        | \bDELETE\s+FROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)  # Match DELETE FROM with table name
+        \bINSERT\s+INTO\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+).*?;[\s]*\n  # Match INSERT INTO with table name, ending with ;
+        | \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+).*?;[\s]*\n  # Match SELECT ... FROM with table name, ending with ;
+        | \bUPDATE\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+).*?\bSET\b.*?;[\s]*\n  # Match UPDATE ... SET with table name, ending with ;
+        | \bDELETE\s+FROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+).*?;[\s]*\n  # Match DELETE FROM with table name, ending with ;
     )
     ''', 
     re.IGNORECASE | re.VERBOSE | re.DOTALL
