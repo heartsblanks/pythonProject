@@ -1,14 +1,14 @@
 select_insert_pattern = re.compile(
     r'''
-    # Match SELECT statements that start with SELECT keyword and contain FROM
-    (?<![\w])\bSELECT\b\s+.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)    # Capture table name after FROM
-    (?=\s|WHERE|;|\)|,|\()                                                # Stop at space, WHERE, ), ;, ,, or (
+    # Capture SELECT statements
+    \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\|\-\+\:\'\"]+?\.[\w]+)    # Capture full database.table name
+    (?=\s|WHERE|;|\)|,|\()                                        # Stop at space, WHERE, ), ;, ,, or (
 
-    |                                                                      # OR
+    |                                                              # OR
 
-    # Match INSERT statements that start with INSERT INTO
-    (?<![\w])\bINSERT\s+INTO\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)            # Capture table name after INSERT INTO
-    (?=\s|\(|;|,)                                                          # Stop at space, (, ;, or ,
+    # Capture INSERT statements
+    \bINSERT\s+INTO\s+([\w.\{\}\(\)\|\-\+\:\'\"]+?\.[\w]+)         # Capture full database.table name
+    (?=\s|\(|;|,)                                                  # Stop at space, (, ;, or ,
     ''', 
     re.IGNORECASE | re.VERBOSE | re.DOTALL
 )
