@@ -181,7 +181,6 @@ class ESQLProcessor:
         # Updated SQL pattern to capture complex table names for INSERT, SELECT, UPDATE, DELETE
         sql_pattern = re.compile(
     r'''
-    ^(?!.*(\*|--|/\*)).*?               # Exclude lines with *, --, or /* before the operation
     (
         \bINSERT\s+INTO\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\b     # Match INSERT INTO followed by table name
         | \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)(?=\s|\)|;|,)  # Capture table name after FROM, up to space, ), ;, or ,
