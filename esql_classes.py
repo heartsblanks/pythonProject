@@ -74,19 +74,19 @@ class DatabaseManager:
         ''')
         # View to summarize data
         cursor.execute('''
-            CREATE VIEW IF NOT EXISTS summary_view AS
-            SELECT
-                m.module_name,
-                f.function_name,
-                o.operation_type,
-                o.table_name,
-                c.call_name
-            FROM
-                modules m
-                JOIN functions f ON m.module_id = f.module_id
-                LEFT JOIN sql_operations o ON f.function_id = o.function_id
-                LEFT JOIN calls c ON f.function_id = c.function_id
-        ''')
+            CREATE VIEW function_summary AS
+SELECT
+    f.function_name,
+    GROUP_CONCAT(DISTINCT op.operation_type || ' on ' || op.table_name, ', ') AS operations,
+    GROUP_CONCAT(DISTINCT c.call_name, ', ') AS calls
+FROM
+    functions f
+LEFT JOIN
+    sql_operations op ON f.function_id = op.function_id
+LEFT JOIN
+    calls c ON f.function_id = c.function_id
+GROUP BY
+    f.function_name''')
         conn.commit()
         conn.close()
 
