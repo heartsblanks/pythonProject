@@ -172,27 +172,29 @@ class ESQLProcessor:
     def process_file(self, file_content, file_name, folder_name):
         module_pattern = re.compile(r'\bCREATE\s+.*?\bMODULE\s+(\w+)\b', re.IGNORECASE)
         
-        # Updated function pattern without case constraints, to handle multi-line function or procedure definitions
+        # Pattern to handle multi-line function or procedure definitions
         function_pattern = re.compile(r'\bCREATE\s+(?:FUNCTION|PROCEDURE)\s+([A-Za-z0-9_]+)\s*\(\s*', re.DOTALL)
         
-        # Final call pattern to exclude purely uppercase names without underscores, support uppercase with underscores
+        # Pattern to identify calls
         call_pattern = re.compile(r'([A-Z]*[a-z_]+[A-Za-z0-9_]*)\(\s*', re.DOTALL)
         
-        # Updated SQL pattern to capture complex table names for INSERT, SELECT, UPDATE, DELETE
+        # Pattern to match SELECT and INSERT statements
         select_insert_pattern = re.compile(
-    r'''
-    # Capture SELECT statements
-    \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)    # Capture table name after FROM
-    (?=\s|WHERE|;|\)|,|\()                                    # Stop at space, WHERE, ), ;, ,, or (
+            r'''
+            # Capture SELECT statements
+            \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)    # Capture table name after FROM
+            (?=\s|WHERE|;|\)|,|\()                                    # Stop at space, WHERE, ), ;, ,, or (
 
-    |                                                          # OR
+            |                                                          # OR
 
-    # Capture INSERT statements
-    \bINSERT\s+INTO\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)         # Capture table name after INSERT INTO
-    (?=\s|\(|;|,)                                              # Stop at space, (, ;, or ,
-    ''', 
-    re.IGNORECASE | re.VERBOSE | re.DOTALL
-)
+            # Capture INSERT statements
+            \bINSERT\s+INTO\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)         # Capture table name after INSERT INTO
+            (?=\s|\(|;|,)                                              # Stop at space, (, ;, or ,
+            ''', 
+            re.IGNORECASE | re.VERBOSE | re.DOTALL
+        )
+
+        # Process modules and their functions
         for module_match in module_pattern.finditer(file_content):
             module_name = module_match.group(1)
             module_id = self._queue_insert_module(file_name, module_name, folder_name)
@@ -202,28 +204,43 @@ class ESQLProcessor:
             module_end = module_start + end_module_match.start() if end_module_match else len(file_content)
             module_content = file_content[module_start:module_end]
 
-            # Iterate over each function in the module content
-            for func_match in function_pattern.finditer(module_content):
-        func_name = func_match.group(1)
-        function_id = self._queue_insert_function(file_name, func_name, folder_name, module_id)
+            # Process each function within the module content
+            self._process_functions(module_content, file_name, folder_name, module_id, select_insert_pattern, call_pattern)
 
-        func_start = func_match.end()
-        next_create_match = function_pattern.search(module_content, func_start)
-        func_end = next_create_match.start() if next_create_match else len(module_content)
-        func_body = module_content[func_start:func_end]
+        # Process standalone functions (outside any module)
+        standalone_content = re.sub(module_pattern, "", file_content)  # Remove modules from content
+        self._process_functions(standalone_content, file_name, folder_name, None, select_insert_pattern, call_pattern)
 
-        for sql_match in select_insert_pattern.finditer(func_body):
-            # Skip if match is likely part of a subquery
-            if '(' in func_body[sql_match.start():sql_match.end()]:
-                continue  # Skip this match if it looks like a subquery
+    def _process_functions(self, content, file_name, folder_name, module_id, select_insert_pattern, call_pattern):
+        """Helper method to process functions, either within a module or standalone."""
+        function_pattern = re.compile(r'\bCREATE\s+(?:FUNCTION|PROCEDURE)\s+([A-Za-z0-9_]+)\s*\(\s*', re.DOTALL)
 
-            sql_type = "SELECT" if sql_match.group(1) else "INSERT"
-            table_name = sql_match.group(1) or sql_match.group(2)
-            self._queue_insert_sql_operation(function_id, sql_type, table_name)
-                # Extract function calls within the function body
-                calls = set(call_pattern.findall(func_body))
-                for call in calls:
-                    self._queue_insert_call(function_id, call)
+        # Iterate over each function in the content
+        for func_match in function_pattern.finditer(content):
+            func_name = func_match.group(1)
+            function_id = self._queue_insert_function(file_name, func_name, folder_name, module_id)
+
+            # Define function body up to the next CREATE FUNCTION/PROCEDURE or end of content
+            func_start = func_match.end()
+            next_create_match = function_pattern.search(content, func_start)
+            func_end = next_create_match.start() if next_create_match else len(content)
+
+            func_body = content[func_start:func_end]
+            
+            # Extract SQL operations within the function body
+            for sql_match in select_insert_pattern.finditer(func_body):
+                # Skip if match is likely part of a subquery
+                if '(' in func_body[sql_match.start():sql_match.end()]:
+                    continue  # Skip this match if it looks like a subquery
+
+                sql_type = "SELECT" if sql_match.group(1) else "INSERT"
+                table_name = sql_match.group(1) or sql_match.group(2)
+                self._queue_insert_sql_operation(function_id, sql_type, table_name)
+
+            # Extract function calls within the function body
+            calls = set(call_pattern.findall(func_body))
+            for call in calls:
+                self._queue_insert_call(function_id, call)
                     
     def _queue_insert_module(self, file_name, module_name, folder_name):
         callback_event = threading.Event()
@@ -244,7 +261,6 @@ class ESQLProcessor:
 
     def _queue_insert_call(self, function_id, call_name):
         self.db_queue.put((self.db_manager.insert_call, (function_id, call_name), None, {}))
-
 
 class DBWriterThread(threading.Thread):
     """Manages a single writer thread that processes database operations from the queue."""
