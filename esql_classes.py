@@ -181,17 +181,17 @@ class ESQLProcessor:
         # Updated SQL pattern to capture complex table names for INSERT, SELECT, UPDATE, DELETE
         sql_pattern = re.compile(
     r'''
-    ^(?!.*(\*|--|/\*)).*?   # Exclude lines with *, --, or /* before the operation
+    ^(?!.*(\*|--|/\*)).*?       # Exclude lines with *, --, or /* before the operation
     (
-        \bINSERT\s+INTO\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+).*?;[\s]*\n  # Match INSERT INTO with table name, ending with ;
-        | \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+).*?;[\s]*\n  # Match SELECT ... FROM with table name, ending with ;
-        | \bUPDATE\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+).*?\bSET\b.*?;[\s]*\n  # Match UPDATE ... SET with table name, ending with ;
-        | \bDELETE\s+FROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+).*?;[\s]*\n  # Match DELETE FROM with table name, ending with ;
+        \bINSERT\s+INTO\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\s+  # Match INSERT INTO with table name followed by whitespace
+        | \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\s+  # Match SELECT ... FROM with table name followed by whitespace
+        | \bUPDATE\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\s+.*?\bSET\b  # Match UPDATE with table name followed by whitespace and SET keyword
+        | \bDELETE\s+FROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\s+  # Match DELETE FROM with table name followed by whitespace
     )
+    .*?;[\s]*\n                 # Match the rest of the statement until the end with a semicolon and optional spaces/newline
     ''', 
     re.IGNORECASE | re.VERBOSE | re.DOTALL
 )
-
         for module_match in module_pattern.finditer(file_content):
             module_name = module_match.group(1)
             module_id = self._queue_insert_module(file_name, module_name, folder_name)
