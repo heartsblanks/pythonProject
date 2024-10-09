@@ -179,10 +179,17 @@ class ESQLProcessor:
         call_pattern = re.compile(r'([A-Z]*[a-z_]+[A-Za-z0-9_]*)\(\s*', re.DOTALL)
         
         # Updated SQL pattern to capture complex table names for INSERT, SELECT, UPDATE, DELETE
-        select_pattern = re.compile(
+        select_insert_pattern = re.compile(
     r'''
-    \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)    # Capture table name after FROM until space, WHERE, ), ;, or ,
-    (?=\s|WHERE|;|\)|,)                                        # Stop at first space, WHERE, ), ;, or ,
+    # Capture SELECT statements
+    \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)    # Capture table name after FROM
+    (?=\s|WHERE|;|\)|,)                                        # Stop at space, WHERE, ), ;, or ,
+
+    |                                                          # OR
+
+    # Capture INSERT statements
+    \bINSERT\s+INTO\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)         # Capture table name after INSERT INTO
+    (?=\s|\(|;|,)                                              # Stop at space, (, ;, or ,
     ''', 
     re.IGNORECASE | re.VERBOSE | re.DOTALL
 )
