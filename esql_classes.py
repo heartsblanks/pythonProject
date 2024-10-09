@@ -179,15 +179,10 @@ class ESQLProcessor:
         call_pattern = re.compile(r'([A-Z]*[a-z_]+[A-Za-z0-9_]*)\(\s*', re.DOTALL)
         
         # Updated SQL pattern to capture complex table names for INSERT, SELECT, UPDATE, DELETE
-        sql_pattern = re.compile(
+        select_pattern = re.compile(
     r'''
-    (
-        \bINSERT\s+INTO\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\b      # Match INSERT INTO followed by table name
-        | \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)(?=\s|WHERE|;|\)|,)  # Capture table name after FROM until space, WHERE, ), ;, or ,
-        | \bUPDATE\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\s+.*?\bSET\b  # Match UPDATE with table name followed by SET
-        | \bDELETE\s+FROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)\b      # Match DELETE FROM followed by table name
-    )
-    .*?;[\s]*\n                          # Match up to the end of the SQL statement
+    \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)    # Capture table name after FROM until space, WHERE, ), ;, or ,
+    (?=\s|WHERE|;|\)|,)                                        # Stop at first space, WHERE, ), ;, or ,
     ''', 
     re.IGNORECASE | re.VERBOSE | re.DOTALL
 )
