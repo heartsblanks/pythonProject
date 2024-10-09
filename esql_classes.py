@@ -130,27 +130,30 @@ GROUP BY
 
 
 class RemoteFileHandler:
-    """Handles remote file retrieval with base64 encoding and fallback, and finds .esql files."""
+    """Handles remote file retrieval, ensuring only the latest version from CVS is fetched in base64."""
 
     @staticmethod
-    def get_remote_file_base64(ssh_executor, file_path):
-        """Retrieve file content from the remote server as base64 to avoid encoding issues."""
-        command = f"base64 {file_path}"
-        base64_content = ssh_executor.execute_command(command).strip()
-        padding_needed = len(base64_content) % 4
-        if padding_needed:
-            base64_content += "=" * (4 - padding_needed)
-        return base64.b64decode(base64_content).decode('utf-8', errors='replace')
+    def get_latest_file_version_base64(ssh_executor, cvsroot, file_path, repo_directory):
+        """Retrieve the latest version of a versioned file from CVS as base64 encoded content."""
+        # Remove the ',v' suffix from file_path
+        file_path = file_path.rstrip(',v')
+        command = f"CVSROOT={cvsroot} cvs checkout -p {file_path} | base64"
+        
+        # Execute command and get base64 encoded content
+        result = ssh_executor.execute_command(command).strip()
+        return result
 
     @staticmethod
-    def read_remote_file_with_fallback(ssh_executor, file_path):
-        """Read the file with a fallback to handle encoding issues."""
+    def read_latest_file_content(ssh_executor, cvsroot, file_path, repo_directory):
+        """Retrieve the latest version of a file in base64, then decode and return as UTF-8 content."""
         try:
-            return RemoteFileHandler.get_remote_file_base64(ssh_executor, file_path)
+            base64_content = RemoteFileHandler.get_latest_file_version_base64(ssh_executor, cvsroot, file_path, repo_directory)
+            # Decode base64 to get file content as UTF-8 string
+            decoded_content = base64.b64decode(base64_content).decode('utf-8', errors='ignore')
+            return decoded_content
         except Exception as e:
-            logging.error(f"Error reading {file_path} as base64: {e}")
-            return ssh_executor.execute_command(f"cat {file_path}")
-
+            logging.error(f"Error retrieving or decoding latest version of {file_path}: {e}")
+            return ""
     @staticmethod
     def find_esql_files(ssh_executor, folder):
         """Find all .esql files in the specified folder on the remote server."""
