@@ -170,47 +170,46 @@ class ESQLProcessor:
         self.db_manager = db_manager
 
     def process_file(self, file_content, file_name, folder_name):
-        module_pattern = re.compile(r'\bCREATE\s+.*?\bMODULE\s+(\w+)\b', re.IGNORECASE)
-        
-        # Pattern to handle multi-line function or procedure definitions
-        function_pattern = re.compile(r'\bCREATE\s+(?:FUNCTION|PROCEDURE)\s+([A-Za-z0-9_]+)\s*\(\s*', re.DOTALL)
-        
-        # Pattern to identify calls
-        call_pattern = re.compile(r'([A-Z]*[a-z_]+[A-Za-z0-9_]*)\(\s*', re.DOTALL)
-        
-        # Pattern to match SELECT and INSERT statements
-        select_insert_pattern = re.compile(
-            r'''
-            # Capture SELECT statements
-            \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)    # Capture table name after FROM
-            (?=\s|WHERE|;|\)|,|\()                                    # Stop at space, WHERE, ), ;, ,, or (
+        module_pattern = re.compile(r'\bCREATE\s+.*?\bMODULE\s+\w+\b.*?\bEND\s+MODULE\b', re.IGNORECASE | re.DOTALL)
+    
+    # Pattern to handle multi-line function or procedure definitions
+    function_pattern = re.compile(r'\bCREATE\s+(?:FUNCTION|PROCEDURE)\s+([A-Za-z0-9_]+)\s*\(\s*', re.DOTALL)
+    
+    # Pattern to identify calls
+    call_pattern = re.compile(r'([A-Z]*[a-z_]+[A-Za-z0-9_]*)\(\s*', re.DOTALL)
+    
+    # Pattern to match SELECT and INSERT statements
+    select_insert_pattern = re.compile(
+        r'''
+        # Capture SELECT statements
+        \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)    # Capture table name after FROM
+        (?=\s|WHERE|;|\)|,|\()                                    # Stop at space, WHERE, ), ;, ,, or (
 
-            |                                                          # OR
+        |                                                          # OR
 
-            # Capture INSERT statements
-            \bINSERT\s+INTO\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)         # Capture table name after INSERT INTO
-            (?=\s|\(|;|,)                                              # Stop at space, (, ;, or ,
-            ''', 
-            re.IGNORECASE | re.VERBOSE | re.DOTALL
-        )
+        # Capture INSERT statements
+        \bINSERT\s+INTO\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)         # Capture table name after INSERT INTO
+        (?=\s|\(|;|,)                                              # Stop at space, (, ;, or ,
+        ''', 
+        re.IGNORECASE | re.VERBOSE | re.DOTALL
+    )
 
-        # Process modules and their functions
-        for module_match in module_pattern.finditer(file_content):
-            module_name = module_match.group(1)
-            module_id = self._queue_insert_module(file_name, module_name, folder_name)
-            
-            module_start = module_match.end()
-            end_module_match = re.search(r'\bEND\s+MODULE\b', file_content[module_start:], re.IGNORECASE)
-            module_end = module_start + end_module_match.start() if end_module_match else len(file_content)
-            module_content = file_content[module_start:module_end]
+    # Process modules and their functions
+    for module_match in re.finditer(module_pattern, file_content):
+        module_content = module_match.group(0)
+        module_name_match = re.search(r'\bCREATE\s+.*?\bMODULE\s+(\w+)\b', module_content, re.IGNORECASE)
+        module_name = module_name_match.group(1) if module_name_match else None
+        module_id = self._queue_insert_module(file_name, module_name, folder_name) if module_name else None
 
-            # Process each function within the module content
-            self._process_functions(module_content, file_name, folder_name, module_id, select_insert_pattern, call_pattern)
+        # Process each function within the module content
+        self._process_functions(module_content, file_name, folder_name, module_id, select_insert_pattern, call_pattern)
 
-        # Process standalone functions (outside any module)
-        standalone_content = re.sub(module_pattern, "", file_content)  # Remove modules from content
+    # Remove entire module blocks to get standalone functions
+    standalone_content = re.sub(module_pattern, "", file_content).strip()
+    
+    # Only process standalone functions if there is standalone content
+    if standalone_content:
         self._process_functions(standalone_content, file_name, folder_name, None, select_insert_pattern, call_pattern)
-
     def _process_functions(self, content, file_name, folder_name, module_id, select_insert_pattern, call_pattern):
         """Helper method to process functions, either within a module or standalone."""
         function_pattern = re.compile(r'\bCREATE\s+(?:FUNCTION|PROCEDURE)\s+([A-Za-z0-9_]+)\s*\(\s*', re.DOTALL)
