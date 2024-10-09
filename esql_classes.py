@@ -183,7 +183,7 @@ class ESQLProcessor:
     r'''
     # Capture SELECT statements
     \bSELECT\b.*?\bFROM\s+([\w.\{\}\(\)\[\]\|\-\+\:\'\"]+)    # Capture table name after FROM
-    (?=\s|WHERE|;|\)|,)                                        # Stop at space, WHERE, ), ;, or ,
+    (?=\s|WHERE|;|\)|,|\()                                    # Stop at space, WHERE, ), ;, ,, or (
 
     |                                                          # OR
 
@@ -204,27 +204,22 @@ class ESQLProcessor:
 
             # Iterate over each function in the module content
             for func_match in function_pattern.finditer(module_content):
-                func_name = func_match.group(1)
-                function_id = self._queue_insert_function(file_name, func_name, folder_name, module_id)
+        func_name = func_match.group(1)
+        function_id = self._queue_insert_function(file_name, func_name, folder_name, module_id)
 
-                # Determine the end of the function body
-                func_start = func_match.end()
-                next_create_match = function_pattern.search(module_content, func_start)
-                func_end = next_create_match.start() if next_create_match else len(module_content)
+        func_start = func_match.end()
+        next_create_match = function_pattern.search(module_content, func_start)
+        func_end = next_create_match.start() if next_create_match else len(module_content)
+        func_body = module_content[func_start:func_end]
 
-                func_body = module_content[func_start:func_end]
-                
-                # Extract SQL operations within the function body
-                for sql_match in sql_pattern.finditer(func_body):
-                    sql_type = (
-                        "INSERT" if sql_match.group(1) else
-                        "SELECT" if sql_match.group(2) else
-                        "UPDATE" if sql_match.group(3) else
-                        "DELETE"
-                    )
-                    table_name = sql_match.group(1) or sql_match.group(2) or sql_match.group(3) or sql_match.group(4)
-                    self._queue_insert_sql_operation(function_id, sql_type, table_name)
+        for sql_match in select_insert_pattern.finditer(func_body):
+            # Skip if match is likely part of a subquery
+            if '(' in func_body[sql_match.start():sql_match.end()]:
+                continue  # Skip this match if it looks like a subquery
 
+            sql_type = "SELECT" if sql_match.group(1) else "INSERT"
+            table_name = sql_match.group(1) or sql_match.group(2)
+            self._queue_insert_sql_operation(function_id, sql_type, table_name)
                 # Extract function calls within the function body
                 calls = set(call_pattern.findall(func_body))
                 for call in calls:
