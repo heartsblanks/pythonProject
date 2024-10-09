@@ -1,12 +1,14 @@
 select_insert_pattern = re.compile(
     r'''
-    # Match SELECT statements and capture the content after FROM
-    \bSELECT\b.*?\bFROM\s+([^\s;]+)                # Capture everything after FROM until whitespace or ;
+    # Match SELECT statements
+    \bSELECT\b.*?\bFROM\s+([\w\{\}\(\)\|\.\'\"]+.*?)    # Capture dynamic content up to .table name or space/terminator
+    (?=\s|WHERE|;|\)|,|$)                               # Stop at space, WHERE, ), ;, ,, or end of line
 
-    |                                              # OR
+    |                                                   # OR
 
-    # Match INSERT statements and capture the content after INTO
-    \bINSERT\s+INTO\s+([^\s;]+)                    # Capture everything after INTO until whitespace or ;
+    # Match INSERT statements
+    \bINSERT\s+INTO\s+([\w\{\}\(\)\|\.\'\"]+.*?)        # Capture dynamic content up to .table name or space/terminator
+    (?=\s|\(|;|,|$)                                     # Stop at space, (, ;, ,, or end of line
     ''', 
     re.IGNORECASE | re.VERBOSE | re.DOTALL
 )
