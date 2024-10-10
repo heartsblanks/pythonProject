@@ -1,3 +1,12 @@
+(?is)\bSELECT\b\s*.*?\bFROM\b\s+([^\s(]+(?:\s*[{(][^;]*?[)}])?\.[^\s(]+?)(?=\b(WHERE|GROUP BY|ORDER BY|JOIN|LIMIT|HAVING|UNION)\b|;|$)
+
+(?is)\bINSERT\b\s+INTO\b\s+([^\s(]+(?:\s*[{(][^;]*?[)}])?\.[^\s(]+?)(?=\s*\(|\s|;|$)
+
+(?is)\bUPDATE\b\s+([^\s(]+(?:\s*[{(][^;]*?[)}])?\.[^\s(]+?)(?=\bSET\b|;|$)
+
+(?is)\bDELETE\b\s*.*?\bFROM\b\s+([^\s(]+(?:\s*[{(][^;]*?[)}])?\.[^\s(]+?)(?=\b(WHERE|;|$))
+
+
 select_insert_pattern = re.compile(
     r'''
     # Capture SELECT statements with FROM
