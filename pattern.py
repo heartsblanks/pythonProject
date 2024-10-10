@@ -13,8 +13,8 @@ select_insert_pattern = re.compile(
 
 import re
 
-# Updated regex to capture complex structures after FROM, handling expressions and aliases
-sql_pattern = r"\b(SELECT|INSERT|UPDATE|DELETE)\b.*?\bFROM\b\s+((?:\w+[\w{}().|'\[\]]*)+)(?:\s+AS\s+\w+)?(.*?)(?=\b(WHERE|GROUP BY|ORDER BY|LIMIT|JOIN|;|$))"
+# Revised regex to capture complex structures, ensuring it includes full expressions after FROM
+sql_pattern = r"\b(SELECT|INSERT|UPDATE|DELETE)\b.*?\bFROM\b\s+((?:[^\s]+?))(?:\s+AS\s+\w+)?(.*?)(?=\b(WHERE|GROUP BY|ORDER BY|LIMIT|JOIN|;|$))"
 
 # Sample file content with complex expressions in the table name
 file_content = """
