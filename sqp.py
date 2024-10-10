@@ -10,13 +10,15 @@ parsed = sqlparse.parse(sql_insert_example)[0]  # Parses the statement as a sing
 operation_type = None
 table_name = None
 
-# Extract the tokens and analyze them
-for token in parsed.tokens:
+# Iterate over tokens to find operation type and table name after INTO
+for idx, token in enumerate(parsed.tokens):
     if token.ttype is sqlparse.tokens.DML:
         operation_type = token.value  # Extracts the operation type (e.g., INSERT)
     elif token.is_keyword and token.value.upper() == 'INTO':
-        # Find the next non-whitespace token after 'INTO'
-        table_name = parsed.token_next_by_instance(token, sqlparse.sql.Identifier).get_real_name()
+        # Get the next non-whitespace token as the table name
+        next_token = parsed.token_next(idx)
+        if isinstance(next_token, sqlparse.sql.Identifier):
+            table_name = next_token.get_real_name()
 
 print("Operation Type:", operation_type)
 print("Table Name:", table_name)
