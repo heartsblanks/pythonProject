@@ -91,43 +91,115 @@ GROUP BY
         conn.close()
 
     def insert_module(self, conn, file_name, module_name, folder_name):
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT OR IGNORE INTO modules (file_name, module_name, folder_name)
-            VALUES (?, ?, ?)
-        ''', (file_name, module_name, folder_name))
-        conn.commit()
-        return cursor.lastrowid if cursor.lastrowid else cursor.execute(
-            "SELECT module_id FROM modules WHERE file_name = ? AND module_name = ? AND folder_name = ?", 
-            (file_name, module_name, folder_name)).fetchone()[0]
+    cursor = conn.cursor()
+    
+    # Check if the module already exists
+    existing_id = cursor.execute(
+        "SELECT module_id, module_name, folder_name FROM modules WHERE file_name = ? AND module_name = ? AND folder_name = ?", 
+        (file_name, module_name, folder_name)
+    ).fetchone()
+    
+    if existing_id:
+        # If the entry exists, update if any values have changed
+        if existing_id[1] != module_name or existing_id[2] != folder_name:
+            cursor.execute(
+                "UPDATE modules SET module_name = ?, folder_name = ? WHERE module_id = ?",
+                (module_name, folder_name, existing_id[0])
+            )
+            conn.commit()
+        return existing_id[0]  # Return the existing ID
+    
+    # If the entry does not exist, insert it
+    cursor.execute('''
+        INSERT INTO modules (file_name, module_name, folder_name)
+        VALUES (?, ?, ?)
+    ''', (file_name, module_name, folder_name))
+    conn.commit()
+    return cursor.lastrowid
 
-    def insert_function(self, conn, file_name, function_name, folder_name, module_id=None):
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT OR IGNORE INTO functions (file_name, function_name, folder_name, module_id)
-            VALUES (?, ?, ?, ?)
-        ''', (file_name, function_name, folder_name, module_id))
-        conn.commit()
-        return cursor.lastrowid if cursor.lastrowid else cursor.execute(
-            "SELECT function_id FROM functions WHERE file_name = ? AND function_name = ? AND folder_name = ? AND module_id IS ?", 
-            (file_name, function_name, folder_name, module_id)).fetchone()[0]
 
-    def insert_sql_operation(self, conn, function_id, operation_type, table_name):
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT OR IGNORE INTO sql_operations (function_id, operation_type, table_name)
-            VALUES (?, ?, ?)
-        ''', (function_id, operation_type, table_name))
-        conn.commit()
+def insert_function(self, conn, file_name, function_name, folder_name, module_id=None):
+    cursor = conn.cursor()
+    
+    # Check if the function already exists
+    existing_id = cursor.execute(
+        "SELECT function_id, function_name, folder_name, module_id FROM functions WHERE file_name = ? AND function_name = ? AND folder_name = ? AND module_id IS ?", 
+        (file_name, function_name, folder_name, module_id)
+    ).fetchone()
+    
+    if existing_id:
+        # If the entry exists, update if any values have changed
+        if existing_id[2] != folder_name or existing_id[3] != module_id:
+            cursor.execute(
+                "UPDATE functions SET folder_name = ?, module_id = ? WHERE function_id = ?",
+                (folder_name, module_id, existing_id[0])
+            )
+            conn.commit()
+        return existing_id[0]  # Return the existing ID
+    
+    # If the entry does not exist, insert it
+    cursor.execute('''
+        INSERT INTO functions (file_name, function_name, folder_name, module_id)
+        VALUES (?, ?, ?, ?)
+    ''', (file_name, function_name, folder_name, module_id))
+    conn.commit()
+    return cursor.lastrowid
 
-    def insert_call(self, conn, function_id, call_name):
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT OR IGNORE INTO calls (function_id, call_name)
-            VALUES (?, ?)
-        ''', (function_id, call_name))
-        conn.commit()
 
+def insert_sql_operation(self, conn, function_id, operation_type, table_name):
+    cursor = conn.cursor()
+    
+    # Check if the SQL operation already exists
+    existing_id = cursor.execute(
+        "SELECT sql_operation_id, operation_type, table_name FROM sql_operations WHERE function_id = ? AND operation_type = ? AND table_name = ?", 
+        (function_id, operation_type, table_name)
+    ).fetchone()
+    
+    if existing_id:
+        # If the entry exists, update if any values have changed
+        if existing_id[1] != operation_type or existing_id[2] != table_name:
+            cursor.execute(
+                "UPDATE sql_operations SET operation_type = ?, table_name = ? WHERE sql_operation_id = ?",
+                (operation_type, table_name, existing_id[0])
+            )
+            conn.commit()
+        return existing_id[0]  # Return the existing ID
+    
+    # If the entry does not exist, insert it
+    cursor.execute('''
+        INSERT INTO sql_operations (function_id, operation_type, table_name)
+        VALUES (?, ?, ?)
+    ''', (function_id, operation_type, table_name))
+    conn.commit()
+    return cursor.lastrowid
+
+
+def insert_call(self, conn, function_id, call_name):
+    cursor = conn.cursor()
+    
+    # Check if the call already exists
+    existing_id = cursor.execute(
+        "SELECT call_id, call_name FROM calls WHERE function_id = ? AND call_name = ?", 
+        (function_id, call_name)
+    ).fetchone()
+    
+    if existing_id:
+        # If the entry exists, update if any values have changed
+        if existing_id[1] != call_name:
+            cursor.execute(
+                "UPDATE calls SET call_name = ? WHERE call_id = ?",
+                (call_name, existing_id[0])
+            )
+            conn.commit()
+        return existing_id[0]  # Return the existing ID
+    
+    # If the entry does not exist, insert it
+    cursor.execute('''
+        INSERT INTO calls (function_id, call_name)
+        VALUES (?, ?)
+    ''', (function_id, call_name))
+    conn.commit()
+    return cursor.lastrowid
 
 class RemoteFileHandler:
     """Handles remote file retrieval, ensuring only the latest version from CVS is fetched in base64."""
