@@ -3,9 +3,10 @@ import sqlparse
 
 # Function to extract SQL statements from ESQL file content
 def extract_sql_statements(esql_content):
-    # Regular expression to capture common SQL statements
-    sql_pattern = r"(SELECT|INSERT|UPDATE|DELETE)\b[\s\S]+?;"
-    return re.findall(sql_pattern, esql_content, re.IGNORECASE)
+    # Regex pattern to match SQL statements across multiple lines, without capturing groups
+    sql_pattern = r"\bSELECT\b[\s\S]+?;|\bINSERT\b[\s\S]+?;|\bUPDATE\b[\s\S]+?;|\bDELETE\b[\s\S]+?;"
+    # Using re.IGNORECASE for case insensitivity and re.DOTALL to capture across lines
+    return re.findall(sql_pattern, esql_content, re.IGNORECASE | re.DOTALL)
 
 # Function to parse each SQL statement and extract details
 def parse_sql_statements(sql_statements):
