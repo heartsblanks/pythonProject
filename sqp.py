@@ -1,72 +1,60 @@
-import re
 import sqlparse
 
-# Function to extract potential SQL statements from ESQL file content
-def extract_sql_statements(esql_content):
-    # Regex pattern to capture statements starting with operation type and ending with ;
-    sql_pattern = r"\b(SELECT|INSERT|UPDATE|DELETE)\b[\s\S]+?;"
-    statements = re.findall(sql_pattern, esql_content, re.IGNORECASE | re.DOTALL)
-    
-    # Filter statements based on the presence of required keywords
-    valid_statements = []
-    for statement in statements:
-        # Determine operation type by extracting the first word (SELECT, INSERT, UPDATE, DELETE)
-        operation_type = statement.split()[0].upper()
-        
-        # Apply secondary regex based on operation type
-        if operation_type == "SELECT":
-            if re.search(r"\bFROM\b", statement, re.IGNORECASE):
-                valid_statements.append(statement)
-        elif operation_type == "INSERT":
-            if re.search(r"\bINTO\b", statement, re.IGNORECASE):
-                valid_statements.append(statement)
-        elif operation_type == "UPDATE":
-            if re.search(r"\bSET\b", statement, re.IGNORECASE):
-                valid_statements.append(statement)
-        elif operation_type == "DELETE":
-            if re.search(r"\bFROM\b", statement, re.IGNORECASE):
-                valid_statements.append(statement)
-    
-    return valid_statements
-
-# Function to parse each SQL statement and extract details
+# Function to parse each SQL statement and extract table names for all operations
 def parse_sql_statements(sql_statements):
     for statement in sql_statements:
         parsed = sqlparse.parse(statement)[0]
         operation_type = None
-        from_clause = None
+        table_name = None  # To hold the table name based on the operation type
         
-        # Check the operation type and capture FROM clause for SELECT statements
+        # Determine the operation type (e.g., SELECT, INSERT, UPDATE, DELETE)
         for token in parsed.tokens:
             if token.ttype is sqlparse.tokens.DML:
                 operation_type = token.value.upper()
-                
-            if operation_type == 'SELECT' and token.is_keyword and token.value.upper() == 'FROM':
-                # Start capturing everything after FROM until next keyword or end of statement
-                from_clause = []
-                for next_token in parsed.tokens[parsed.token_index(token)+1:]:
-                    if next_token.is_keyword or next_token.value == ";":
-                        break
-                    from_clause.append(str(next_token))
-                
-                from_clause = ''.join(from_clause).strip()
                 break
+        
+        # Based on operation type, extract the table name
+        if operation_type == 'SELECT' or operation_type == 'DELETE':
+            # Look for the FROM clause to get the table name
+            for token in parsed.tokens:
+                if token.is_keyword and token.value.upper() == 'FROM':
+                    # The next non-whitespace token should be the table name
+                    next_token = parsed.token_next(parsed.token_index(token))
+                    if next_token:
+                        table_name = next_token.get_real_name() or next_token.value
+                    break
+        
+        elif operation_type == 'INSERT':
+            # Look for the INTO clause to get the table name
+            for token in parsed.tokens:
+                if token.is_keyword and token.value.upper() == 'INTO':
+                    # The next non-whitespace token should be the table name
+                    next_token = parsed.token_next(parsed.token_index(token))
+                    if next_token:
+                        table_name = next_token.get_real_name() or next_token.value
+                    break
+        
+        elif operation_type == 'UPDATE':
+            # The next token after UPDATE should be the table name
+            for token in parsed.tokens:
+                if token.ttype is sqlparse.tokens.Keyword and token.value.upper() == 'UPDATE':
+                    # The next non-whitespace token should be the table name
+                    next_token = parsed.token_next(parsed.token_index(token))
+                    if next_token:
+                        table_name = next_token.get_real_name() or next_token.value
+                    break
 
-        # Output the operation type and FROM clause (if any)
+        # Output the operation type and table name
         print(f"Operation Type: {operation_type}")
-        if from_clause:
-            print(f"From Clause: {from_clause}\n")
+        if table_name:
+            print(f"Table Name: {table_name}\n")
 
-# Load the ESQL file content
-def process_esql_file(file_path):
-    with open(file_path, 'r') as file:
-        esql_content = file.read()
-    
-    # Extract SQL statements from the ESQL content
-    sql_statements = extract_sql_statements(esql_content)
-    
-    # Parse and analyze each SQL statement
-    parse_sql_statements(sql_statements)
+# Example usage with extracted SQL statements
+sql_statements = [
+    "SELECT column1, column2 FROM my_table WHERE condition = 'value';",
+    "INSERT INTO my_table (column1, column2) VALUES ('value1', 'value2');",
+    "UPDATE my_table SET column1 = 'new_value' WHERE condition = 'value';",
+    "DELETE FROM my_table WHERE condition = 'value';"
+]
 
-# Example usage
-process_esql_file("your_esql_file.esql")
+parse_sql_statements(sql_statements)
