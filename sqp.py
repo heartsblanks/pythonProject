@@ -1,32 +1,49 @@
-import sqlglot
+import sqlparse
 
-# Complex SQL statement with nested query and joins
-sql = """
-SELECT a.column1, b.column2 
-FROM (SELECT column1 FROM database1.table1) AS a 
-JOIN database2.table2 AS b ON a.column1 = b.column1 
-WHERE b.column2 IN (SELECT column2 FROM database3.table3 WHERE condition = 'value');
-"""
+# Function to extract SELECT statements and get content after FROM
+def extract_from_clause(sql_statement):
+    # Parse the SQL statement
+    parsed = sqlparse.parse(sql_statement)[0]
+    
+    from_clause = None
+    capture = False
+    result = []
+    
+    # Iterate through the tokens in the SQL statement
+    for token in parsed.tokens:
+        # Identify the 'SELECT' statement
+        if token.ttype is sqlparse.tokens.DML and token.value.upper() == 'SELECT':
+            operation_type = 'SELECT'
+        
+        # When we hit 'FROM', start capturing
+        if token.is_keyword and token.value.upper() == 'FROM':
+            capture = True
+            continue  # Skip 'FROM' itself
+        
+        # Stop capturing at the next SQL keyword or end of statement
+        if capture:
+            if token.is_keyword or token.value == ";":
+                break
+            result.append(str(token))
+    
+    from_clause = ''.join(result).strip()
+    return operation_type, from_clause
 
-# Parse the SQL statement
-parsed = sqlglot.parse_one(sql)
+# Function to process SQL file
+def process_sql_file(file_path):
+    with open(file_path, 'r') as file:
+        content = file.read()
+    
+    # Split the file content into individual SQL statements
+    statements = sqlparse.split(content)
+    
+    # Process each statement
+    for statement in statements:
+        # Check if it's a SELECT statement and extract FROM clause
+        if statement.strip().upper().startswith('SELECT'):
+            operation_type, from_clause = extract_from_clause(statement)
+            print(f"Operation Type: {operation_type}")
+            print(f"From Clause: {from_clause}\n")
 
-# Extract the operation type
-operation_type = parsed.find("select")  # For other types, use "insert", "update", etc.
-if operation_type:
-    operation_type = "SELECT"  # We assume SELECT as an example here
-
-# Function to extract table names from joins and subqueries
-def extract_table_names(parsed_node):
-    tables = []
-    # Find all FROM and JOIN clauses, which hold the tables
-    for node in parsed_node.find_all("from") + parsed_node.find_all("join"):
-        if node.args.get("this"):
-            tables.append(node.args["this"].sql())
-    return tables
-
-# Extract table names from the main query and subqueries
-table_names = extract_table_names(parsed)
-
-print("Operation Type:", operation_type)
-print("Table Names:", table_names)
+# Example usage
+process_sql_file("your_sql_file.sql")
