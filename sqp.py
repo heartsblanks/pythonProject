@@ -1,24 +1,32 @@
-import sqlparse
+import sqlglot
 
-# Sample INSERT SQL statement
-sql_insert_example = "INSERT INTO database.{getdb() ,'hr'}.tablename (columns)"
+# Complex SQL statement with nested query and joins
+sql = """
+SELECT a.column1, b.column2 
+FROM (SELECT column1 FROM database1.table1) AS a 
+JOIN database2.table2 AS b ON a.column1 = b.column1 
+WHERE b.column2 IN (SELECT column2 FROM database3.table3 WHERE condition = 'value');
+"""
 
 # Parse the SQL statement
-parsed = sqlparse.parse(sql_insert_example)[0]  # Parses the statement as a single object
+parsed = sqlglot.parse_one(sql)
 
-# Initialize variables for operation type and table name
-operation_type = None
-table_name = None
+# Extract the operation type
+operation_type = parsed.find("select")  # For other types, use "insert", "update", etc.
+if operation_type:
+    operation_type = "SELECT"  # We assume SELECT as an example here
 
-# Iterate over tokens to find operation type and table name after INTO
-for idx, token in enumerate(parsed.tokens):
-    if token.ttype is sqlparse.tokens.DML:
-        operation_type = token.value  # Extracts the operation type (e.g., INSERT)
-    elif token.is_keyword and token.value.upper() == 'INTO':
-        # Get the next non-whitespace token as the table name
-        next_token = parsed.token_next(idx)
-        if isinstance(next_token, sqlparse.sql.Identifier):
-            table_name = next_token.get_real_name()
+# Function to extract table names from joins and subqueries
+def extract_table_names(parsed_node):
+    tables = []
+    # Find all FROM and JOIN clauses, which hold the tables
+    for node in parsed_node.find_all("from") + parsed_node.find_all("join"):
+        if node.args.get("this"):
+            tables.append(node.args["this"].sql())
+    return tables
+
+# Extract table names from the main query and subqueries
+table_names = extract_table_names(parsed)
 
 print("Operation Type:", operation_type)
-print("Table Name:", table_name)
+print("Table Names:", table_names)
