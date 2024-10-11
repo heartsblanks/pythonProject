@@ -1,17 +1,33 @@
 import re
 import sqlparse
 
-# Function to extract SQL statements from ESQL file content
+# Function to extract potential SQL statements from ESQL file content
 def extract_sql_statements(esql_content):
-    # Updated regex pattern to ensure each statement contains the necessary keyword
-    sql_pattern = (
-        r"\bSELECT\b[\s\S]+?\bFROM\b[\s\S]+?;"       # SELECT with FROM
-        r"|\bINSERT\b[\s\S]+?\bINTO\b[\s\S]+?;"      # INSERT with INTO
-        r"|\bUPDATE\b[\s\S]+?\bSET\b[\s\S]+?;"       # UPDATE with SET
-        r"|\bDELETE\b[\s\S]+?\bFROM\b[\s\S]+?;"      # DELETE with FROM
-    )
-    # Using re.IGNORECASE and re.DOTALL to capture across lines and be case-insensitive
-    return re.findall(sql_pattern, esql_content, re.IGNORECASE | re.DOTALL)
+    # Regex pattern to capture statements starting with operation type and ending with ;
+    sql_pattern = r"\b(SELECT|INSERT|UPDATE|DELETE)\b[\s\S]+?;"
+    statements = re.findall(sql_pattern, esql_content, re.IGNORECASE | re.DOTALL)
+    
+    # Filter statements based on the presence of required keywords
+    valid_statements = []
+    for statement in statements:
+        # Determine operation type by extracting the first word (SELECT, INSERT, UPDATE, DELETE)
+        operation_type = statement.split()[0].upper()
+        
+        # Apply secondary regex based on operation type
+        if operation_type == "SELECT":
+            if re.search(r"\bFROM\b", statement, re.IGNORECASE):
+                valid_statements.append(statement)
+        elif operation_type == "INSERT":
+            if re.search(r"\bINTO\b", statement, re.IGNORECASE):
+                valid_statements.append(statement)
+        elif operation_type == "UPDATE":
+            if re.search(r"\bSET\b", statement, re.IGNORECASE):
+                valid_statements.append(statement)
+        elif operation_type == "DELETE":
+            if re.search(r"\bFROM\b", statement, re.IGNORECASE):
+                valid_statements.append(statement)
+    
+    return valid_statements
 
 # Function to parse each SQL statement and extract details
 def parse_sql_statements(sql_statements):
@@ -26,7 +42,7 @@ def parse_sql_statements(sql_statements):
                 operation_type = token.value.upper()
                 
             if operation_type == 'SELECT' and token.is_keyword and token.value.upper() == 'FROM':
-                # Start capturing everything after FROM until the next keyword or end of statement
+                # Start capturing everything after FROM until next keyword or end of statement
                 from_clause = []
                 for next_token in parsed.tokens[parsed.token_index(token)+1:]:
                     if next_token.is_keyword or next_token.value == ";":
