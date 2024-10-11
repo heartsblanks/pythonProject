@@ -1,60 +1,43 @@
-import sqlparse
+import sqlglot
 
-# Function to parse each SQL statement and extract complex table names for all operations
+# Function to parse SQL statements and extract operation type and table name
 def parse_sql_statements(sql_statements):
     for statement in sql_statements:
-        parsed = sqlparse.parse(statement)[0]
-        operation_type = None
-        table_name = None  # To hold the complex table name based on the operation type
-        
-        # Determine the operation type (e.g., SELECT, INSERT, UPDATE, DELETE)
-        for token in parsed.tokens:
-            if token.ttype is sqlparse.tokens.DML:
-                operation_type = token.value.upper()
-                break
-        
-        # Based on operation type, extract the complex table name
-        if operation_type in ('SELECT', 'DELETE'):
-            # Look for the FROM clause to get the table name
-            for token in parsed.tokens:
-                if token.is_keyword and token.value.upper() == 'FROM':
-                    # Capture complex table name expression
-                    table_name = []
-                    for next_token in parsed.tokens[parsed.token_index(token)+1:]:
-                        if next_token.is_keyword or next_token.value in [";", "VALUES", "SET"]:
-                            break
-                        table_name.append(next_token.value)
-                    table_name = ''.join(table_name).strip()
-                    break
-        
-        elif operation_type == 'INSERT':
-            # Look for the INTO clause to get the table name
-            for token in parsed.tokens:
-                if token.is_keyword and token.value.upper() == 'INTO':
-                    # Capture complex table name expression
-                    table_name = []
-                    for next_token in parsed.tokens[parsed.token_index(token)+1:]:
-                        if next_token.is_keyword or next_token.value in [";", "VALUES", "("]:
-                            break
-                        table_name.append(next_token.value)
-                    table_name = ''.join(table_name).strip()
-                    break
-        
-        elif operation_type == 'UPDATE':
-            # Capture the complex table name right after UPDATE
-            for token in parsed.tokens:
-                if token.ttype is sqlparse.tokens.Keyword and token.value.upper() == 'UPDATE':
-                    # Capture complex table name expression
-                    table_name = []
-                    for next_token in parsed.tokens[parsed.token_index(token)+1:]:
-                        if next_token.is_keyword or next_token.value in [";", "SET"]:
-                            break
-                        table_name.append(next_token.value)
-                    table_name = ''.join(table_name).strip()
-                    break
+        # Parse the SQL statement to get an AST
+        parsed = sqlglot.parse_one(statement)
 
-        # Output the operation type and complex table name
-        print(f"Operation Type: {operation_type}")
+        # Identify the operation type
+        operation_type = parsed.find(sqlglot.exp.Select) or \
+                         parsed.find(sqlglot.exp.Insert) or \
+                         parsed.find(sqlglot.exp.Update) or \
+                         parsed.find(sqlglot.exp.Delete)
+
+        # Get the name of the operation
+        if operation_type:
+            operation_name = operation_type.key
+
+        # Extract table name based on operation
+        table_name = None
+        if operation_name == 'select' or operation_name == 'delete':
+            # Get table name from FROM clause
+            from_clause = parsed.find(sqlglot.exp.From)
+            if from_clause and from_clause.this:
+                table_name = from_clause.this.sql()
+        
+        elif operation_name == 'insert':
+            # Get table name from INTO clause
+            into_clause = parsed.find(sqlglot.exp.Into)
+            if into_clause and into_clause.this:
+                table_name = into_clause.this.sql()
+        
+        elif operation_name == 'update':
+            # Get table name after UPDATE
+            table_clause = parsed.find(sqlglot.exp.Table)
+            if table_clause:
+                table_name = table_clause.sql()
+
+        # Output the operation type and table name
+        print(f"Operation Type: {operation_name.upper()}")
         if table_name:
             print(f"Table Name: {table_name}\n")
 
