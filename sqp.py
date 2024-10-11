@@ -14,16 +14,16 @@ def parse_sql_statements(sql_statements):
                 break
         
         # Based on operation type, extract the complex table name
-        if operation_type == 'SELECT' or operation_type == 'DELETE':
+        if operation_type in ('SELECT', 'DELETE'):
             # Look for the FROM clause to get the table name
             for token in parsed.tokens:
                 if token.is_keyword and token.value.upper() == 'FROM':
                     # Capture complex table name expression
                     table_name = []
                     for next_token in parsed.tokens[parsed.token_index(token)+1:]:
-                        if next_token.is_keyword or next_token.value in [";", "("]:
+                        if next_token.is_keyword or next_token.value in [";", "VALUES", "SET"]:
                             break
-                        table_name.append(str(next_token))
+                        table_name.append(next_token.value)
                     table_name = ''.join(table_name).strip()
                     break
         
@@ -34,9 +34,9 @@ def parse_sql_statements(sql_statements):
                     # Capture complex table name expression
                     table_name = []
                     for next_token in parsed.tokens[parsed.token_index(token)+1:]:
-                        if next_token.is_keyword or next_token.value in [";", "("]:
+                        if next_token.is_keyword or next_token.value in [";", "VALUES", "("]:
                             break
-                        table_name.append(str(next_token))
+                        table_name.append(next_token.value)
                     table_name = ''.join(table_name).strip()
                     break
         
@@ -47,9 +47,9 @@ def parse_sql_statements(sql_statements):
                     # Capture complex table name expression
                     table_name = []
                     for next_token in parsed.tokens[parsed.token_index(token)+1:]:
-                        if next_token.is_keyword or next_token.value in [";", "("]:
+                        if next_token.is_keyword or next_token.value in [";", "SET"]:
                             break
-                        table_name.append(str(next_token))
+                        table_name.append(next_token.value)
                     table_name = ''.join(table_name).strip()
                     break
 
@@ -60,10 +60,10 @@ def parse_sql_statements(sql_statements):
 
 # Example usage with extracted SQL statements
 sql_statements = [
-    "SELECT column1, column2 FROM Database.{getSchema(), 'HT'}.my_table WHERE condition = 'value';",
-    "INSERT INTO Database.{getSchema(), 'HT'}.my_table (column1, column2) VALUES ('value1', 'value2');",
-    "UPDATE Database.{getSchema(), 'HT'}.my_table SET column1 = 'new_value' WHERE condition = 'value';",
-    "DELETE FROM Database.{getSchema(), 'HT'}.my_table WHERE condition = 'value';"
+    "SELECT column1, column2 FROM Database.{getSchema(), 'HT'}.tablename WHERE condition = 'value';",
+    "INSERT INTO Database.{getSchema() || 'HT'}.tablename (column1, column2) VALUES ('value1', 'value2');",
+    "UPDATE Database.{getSchema(), 'HT'}.tablename SET column1 = 'new_value' WHERE condition = 'value';",
+    "DELETE FROM Database.{getSchema(), 'HT'}.tablename WHERE condition = 'value';"
 ]
 
 parse_sql_statements(sql_statements)
