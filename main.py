@@ -1,67 +1,51 @@
-import os
-import urllib.request
-from urllib.parse import urljoin
-from bs4 import BeautifulSoup
-import subprocess
-import ssl
-import requests
-import os
-import os
-import urllib.request
+import queue
+import threading
+import concurrent.futures
 
-# Set the SSL_CERT_FILE environment variable to the path of the certificate bundle file (cacert.pem)
-cert_file_path = "/Users/viniththomas/Downloads/cacert.pem"  # Replace this with the actual path to the downloaded cacert.pem file
-os.environ["SSL_CERT_FILE"] = cert_file_path
+# Assuming you have DatabaseManager, SSHExecutor, and RemoteFileHandler classes defined elsewhere
 
-# Rest of your code goes here
-# ...
+def main():
+    db_queue = queue.Queue()
+    db_manager = DatabaseManager("path_to_your_database.db")
+    db_writer = DBWriterThread(db_queue, db_manager)
+    db_writer.start()
 
+    # Connect to remote server and retrieve folder names
+    with SSHExecutor(hostname="...", private_key_path="...") as ssh_executor:
+        file_handler = RemoteFileHandler(ssh_executor)
+        folders = file_handler.get_folders()  # Implement this method in RemoteFileHandler to get remote folders
 
-def get_images_from_url(url, download_folder):
-    # Fetch the HTML content of the URL
-    response = requests.get(url, verify=False)
-    page_source = response.text
+        # Insert each folder as a project and store project_id for later use
+        project_ids = {}
+        for folder in folders:
+            callback_event = threading.Event()
+            result_container = {}
+            db_queue.put((db_manager.insert_project, (folder,), callback_event, result_container))
+            callback_event.wait()
+            project_ids[folder] = result_container["result"]
 
+        # Start processing files in each folder
+        esql_processor = ESQLProcessor(db_queue, db_manager)
+        msgflow_processor = MsgFlowProcessor(db_queue, db_manager)
 
-    # Process the HTML content to find and download images
-    soup = BeautifulSoup(page_source, 'html.parser')
-    img_tags = soup.find_all('img')
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            for folder in folders:
+                project_id = project_ids[folder]
+                
+                # Process .esql files
+                esql_files = file_handler.find_files(folder, "esql")
+                for esql_file in esql_files:
+                    file_content = file_handler.get_file_content_base64(ssh_executor, esql_file)
+                    executor.submit(esql_processor.process_file, file_content, esql_file, project_id)
 
-    os.makedirs(download_folder, exist_ok=True)
+                # Process .msgflow files
+                msgflow_files = file_handler.find_files(folder, "msgflow")
+                for msgflow_file in msgflow_files:
+                    file_content = file_handler.get_file_content_base64(ssh_executor, msgflow_file)
+                    executor.submit(msgflow_processor.process_file, file_content, msgflow_file, project_id)
 
-    for img in img_tags:
-        img_url = img.get('src')
-        if img_url:
-            abs_img_url = urljoin(url, img_url)
-            img_filename = os.path.join(download_folder, os.path.basename(abs_img_url))
-            urllib.request.urlretrieve(abs_img_url, img_filename)
+    db_queue.put(None)  # Signal db_writer to stop
+    db_writer.join()
 
-def get_urls_from_safari_tabs():
-    applescript = """
-    tell application "Safari"
-        set tabList to {}
-        set windowCount to count windows
-        repeat with i from 1 to windowCount
-            set tabCount to count tabs of window i
-            repeat with j from 1 to tabCount
-                set currentTab to URL of tab j of window i
-                copy currentTab to the end of tabList
-            end repeat
-        end repeat
-        return tabList
-    end tell
-    """
-    urls = subprocess.run(['osascript', '-e', applescript], capture_output=True, text=True).stdout.strip().split(', ')
-    return urls
-
-# Example usage:
-download_root = "/Users/viniththomas/Desktop/Safari_Images"  # Replace this with the desired root download folder path
-
-urls = get_urls_from_safari_tabs()
-for i, url in enumerate(urls, start=1):
-    print(f"Tab {i}: {url}")
-    # Create a new folder within Safari_Images for each URL
-    download_folder = os.path.join(download_root, f"Tab_{i}")
-    get_images_from_url(url, download_folder)
-
-print("Downloaded all images from Safari tabs to the folder:", download_root)
+if __name__ == "__main__":
+    main()
