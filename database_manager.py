@@ -360,3 +360,13 @@ class DatabaseManager:
             """, (msgflow_id, property_name, property_value))
             self.conn.commit()
             return cursor.lastrowid
+    
+    def get_primary_key_columns(self, conn, table_name):
+    cursor = conn.cursor()
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    table_info = cursor.fetchall()
+    return [info[1] for info in table_info if info[5] > 0]
+    def upsert_data(self, conn, base_insert_query, query_values):
+    cursor = conn.cursor()
+    cursor.execute(base_insert_query, query_values)
+    conn.commit()
