@@ -278,6 +278,17 @@ class DatabaseManager:
     UNIQUE (pap_id, server_id)  -- Ensures no duplicate entries for the same PAP-Server pair
 )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS OtherProperties (
+    other_property_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_file_id INTEGER NOT NULL,
+    property_name TEXT NOT NULL,
+    environment TEXT,
+    value TEXT,
+    FOREIGN KEY (property_file_id) REFERENCES PropertyFiles(pf_id),
+    UNIQUE (property_file_id, property_name, environment)
+)
+        """)
         
         self.conn.commit()
     def insert_project(self, project_name):
@@ -598,3 +609,29 @@ class DatabaseManager:
         pap_server_id = cursor.lastrowid
         conn.close()
         return pap_server_id
+    def insert_other_property(self, property_file_id, property_name, environment, value):
+        """Inserts or retrieves an 'other' property entry."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Check if the property already exists
+        cursor.execute("""
+            SELECT other_property_id 
+            FROM OtherProperties 
+            WHERE property_file_id = ? AND property_name = ? AND environment = ?
+        """, (property_file_id, property_name, environment))
+        result = cursor.fetchone()
+        
+        if result:
+            conn.close()
+            return result[0]
+
+        # Insert the property if it doesn't already exist
+        cursor.execute("""
+            INSERT INTO OtherProperties (property_file_id, property_name, environment, value)
+            VALUES (?, ?, ?, ?)
+        """, (property_file_id, property_name, environment, value))
+        conn.commit()
+        other_property_id = cursor.lastrowid
+        conn.close()
+        return other_property_id
