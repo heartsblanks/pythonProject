@@ -204,6 +204,62 @@ class DatabaseManager:
             GROUP BY 
                 p.project_name, mf.msgflow_name, f.function_name, m.module_name
         """)
+
+        # Create PropertyFiles Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS PropertyFiles (
+                file_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pap_id INTEGER NOT NULL,
+                pf_id INTEGER NOT NULL,
+                file_name TEXT NOT NULL,
+                FOREIGN KEY (pap_id) REFERENCES PAP(pap_id)
+            )
+        """)
+
+        # Create Queues Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS Queues (
+                queue_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                queue_name TEXT NOT NULL,
+                queue_type TEXT NOT NULL CHECK (queue_type IN ('EVT', 'ERR', 'CPY'))
+            )
+        """)
+
+        # Create PAP_Queues Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS PAP_Queues (
+                pap_queue_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pap_id INTEGER NOT NULL,
+                queue_id INTEGER NOT NULL,
+                FOREIGN KEY (pap_id) REFERENCES PAP(pap_id),
+                FOREIGN KEY (queue_id) REFERENCES Queues(queue_id),
+                UNIQUE(pap_id, queue_id)
+            )
+        """)
+
+        # Create DatabaseProperties Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS DatabaseProperties (
+                db_property_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id INTEGER NOT NULL,
+                db_name TEXT NOT NULL,
+                environment TEXT NOT NULL,
+                value TEXT NOT NULL,
+                FOREIGN KEY (file_id) REFERENCES PropertyFiles(file_id)
+            )
+        """)
+
+        # Create WebServices Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS WebServices (
+                ws_property_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                file_id INTEGER NOT NULL,
+                ws_name TEXT NOT NULL,
+                environment TEXT NOT NULL,
+                url TEXT NOT NULL,
+                FOREIGN KEY (file_id) REFERENCES PropertyFiles(file_id)
+            )
+        """)
         
         self.conn.commit()
     def insert_project(self, project_name):
@@ -370,3 +426,118 @@ class DatabaseManager:
     cursor = conn.cursor()
     cursor.execute(base_insert_query, query_values)
     conn.commit()
+    # Insert methods with existing record checks
+
+    def insert_pap(self, pap_name, description=None):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT pap_id FROM PAP WHERE pap_name = ?", (pap_name,))
+        result = cursor.fetchone()
+        
+        if result:
+            conn.close()
+            return result[0]
+
+        cursor.execute("""
+            INSERT INTO PAP (pap_name, description) VALUES (?, ?)
+        """, (pap_name, description))
+        conn.commit()
+        pap_id = cursor.lastrowid
+        conn.close()
+        return pap_id
+
+    def insert_property_file(self, pap_id, pf_id, file_name):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT file_id FROM PropertyFiles WHERE pap_id = ? AND pf_id = ? AND file_name = ?", (pap_id, pf_id, file_name))
+        result = cursor.fetchone()
+        
+        if result:
+            conn.close()
+            return result[0]
+
+        cursor.execute("""
+            INSERT INTO PropertyFiles (pap_id, pf_id, file_name) VALUES (?, ?, ?)
+        """, (pap_id, pf_id, file_name))
+        conn.commit()
+        file_id = cursor.lastrowid
+        conn.close()
+        return file_id
+
+    def insert_queue(self, queue_name, queue_type):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT queue_id FROM Queues WHERE queue_name = ? AND queue_type = ?", (queue_name, queue_type))
+        result = cursor.fetchone()
+        
+        if result:
+            conn.close()
+            return result[0]
+
+        cursor.execute("""
+            INSERT INTO Queues (queue_name, queue_type) VALUES (?, ?)
+        """, (queue_name, queue_type))
+        conn.commit()
+        queue_id = cursor.lastrowid
+        conn.close()
+        return queue_id
+
+    def insert_pap_queue(self, pap_id, queue_id):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT pap_queue_id FROM PAP_Queues WHERE pap_id = ? AND queue_id = ?", (pap_id, queue_id))
+        result = cursor.fetchone()
+        
+        if result:
+            conn.close()
+            return result[0]
+
+        cursor.execute("""
+            INSERT INTO PAP_Queues (pap_id, queue_id) VALUES (?, ?)
+        """, (pap_id, queue_id))
+        conn.commit()
+        pap_queue_id = cursor.lastrowid
+        conn.close()
+        return pap_queue_id
+
+    def insert_database_property(self, file_id, db_name, environment, value):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT db_property_id FROM DatabaseProperties WHERE file_id = ? AND db_name = ? AND environment = ?", (file_id, db_name, environment))
+        result = cursor.fetchone()
+        
+        if result:
+            conn.close()
+            return result[0]
+
+        cursor.execute("""
+            INSERT INTO DatabaseProperties (file_id, db_name, environment, value) VALUES (?, ?, ?, ?)
+        """, (file_id, db_name, environment, value))
+        conn.commit()
+        db_property_id = cursor.lastrowid
+        conn.close()
+        return db_property_id
+
+    def insert_web_service(self, file_id, ws_name, environment, url):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT ws_property_id FROM WebServices WHERE file_id = ? AND ws_name = ? AND environment = ?", (file_id, ws_name, environment))
+        result = cursor.fetchone()
+        
+        if result:
+            conn.close()
+            return result[0]
+
+        cursor.execute("""
+            INSERT INTO WebServices (file_id, ws_name, environment, url) VALUES (?, ?, ?, ?)
+        """, (file_id, ws_name, environment, url))
+        conn.commit()
+        ws_property_id = cursor.lastrowid
+        conn.close()
+        return ws_property_id
