@@ -260,6 +260,22 @@ class DatabaseManager:
                 FOREIGN KEY (file_id) REFERENCES PropertyFiles(file_id)
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IntegrationServers (
+    server_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    server_name TEXT NOT NULL UNIQUE
+)
+        """)
+        cursor.execute("""
+            CREATE TABLE PAP_IntegrationServers (
+    pap_server_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pap_id INTEGER NOT NULL,
+    server_id INTEGER NOT NULL,
+    FOREIGN KEY (pap_id) REFERENCES PAP(pap_id),
+    FOREIGN KEY (server_id) REFERENCES IntegrationServers(server_id),
+    UNIQUE (pap_id, server_id)  -- Ensures no duplicate entries for the same PAP-Server pair
+)
+        """)
         
         self.conn.commit()
     def insert_project(self, project_name):
@@ -541,3 +557,42 @@ class DatabaseManager:
         ws_property_id = cursor.lastrowid
         conn.close()
         return ws_property_id
+    def insert_integration_server(self, server_name):
+        """Inserts or retrieves an integration server entry."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT server_id FROM IntegrationServers WHERE server_name = ?", (server_name,))
+        result = cursor.fetchone()
+        
+        if result:
+            conn.close()
+            return result[0]
+
+        cursor.execute("""
+            INSERT INTO IntegrationServers (server_name) VALUES (?)
+        """, (server_name,))
+        conn.commit()
+        server_id = cursor.lastrowid
+        conn.close()
+        return server_id
+
+    def insert_pap_integration_server(self, pap_id, server_id):
+        """Links a PAP with an integration server, if not already linked."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT pap_server_id FROM PAP_IntegrationServers WHERE pap_id = ? AND server_id = ?", (pap_id, server_id))
+        result = cursor.fetchone()
+        
+        if result:
+            conn.close()
+            return result[0]
+
+        cursor.execute("""
+            INSERT INTO PAP_IntegrationServers (pap_id, server_id) VALUES (?, ?)
+        """, (pap_id, server_id))
+        conn.commit()
+        pap_server_id = cursor.lastrowid
+        conn.close()
+        return pap_server_id
