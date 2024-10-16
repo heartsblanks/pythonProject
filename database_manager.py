@@ -228,13 +228,15 @@ class DatabaseManager:
         # Create PAP_Queues Table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS PAP_Queues (
-                pap_queue_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                pap_id INTEGER NOT NULL,
-                queue_id INTEGER NOT NULL,
-                FOREIGN KEY (pap_id) REFERENCES PAP(pap_id),
-                FOREIGN KEY (queue_id) REFERENCES Queues(queue_id),
-                UNIQUE(pap_id, queue_id)
-            )
+    pap_queue_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pap_id INTEGER NOT NULL,
+    pf_id INTEGER NOT NULL,
+    queue_id INTEGER NOT NULL,
+    FOREIGN KEY (pap_id) REFERENCES PAP(pap_id),
+    FOREIGN KEY (pf_id) REFERENCES PropertyFiles(pf_id),
+    FOREIGN KEY (queue_id) REFERENCES Queues(queue_id),
+    UNIQUE (pap_id, pf_id, queue_id)  -- Ensures no duplicate entries for the same PAP-PF-Queue combination
+)
         """)
 
         # Create DatabaseProperties Table
@@ -505,7 +507,7 @@ class DatabaseManager:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        cursor.execute("SELECT pap_queue_id FROM PAP_Queues WHERE pap_id = ? AND queue_id = ?", (pap_id, queue_id))
+        cursor.execute("SELECT pap_queue_id FROM PAP_Queues WHERE pap_id = ? AND pf_id = ? AND queue_id = ?", (pap_id, pf_id, queue_id))
         result = cursor.fetchone()
         
         if result:
@@ -513,8 +515,8 @@ class DatabaseManager:
             return result[0]
 
         cursor.execute("""
-            INSERT INTO PAP_Queues (pap_id, queue_id) VALUES (?, ?)
-        """, (pap_id, queue_id))
+            INSERT INTO PAP_Queues (pap_id, pf_id, queue_id) VALUES (?, ?, ?)
+        """, (pap_id, pf_id, queue_id))
         conn.commit()
         pap_queue_id = cursor.lastrowid
         conn.close()
