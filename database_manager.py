@@ -289,6 +289,42 @@ class DatabaseManager:
     UNIQUE (property_file_id, property_name, environment)
 )
         """)
+        # Definitions Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS Definitions (
+                definition_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT NOT NULL,
+                name TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # Attributes Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS Attributes (
+                attribute_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                definition_id INTEGER NOT NULL,
+                attribute_key TEXT NOT NULL,
+                attribute_value TEXT,
+                FOREIGN KEY (definition_id) REFERENCES Definitions(definition_id),
+                UNIQUE (definition_id, attribute_key)
+            );
+        """)
+
+        # Relationships Table (optional, in case we need relationships between definitions)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS Relationships (
+                relationship_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                definition_id INTEGER NOT NULL,
+                related_definition_id INTEGER NOT NULL,
+                relationship_type TEXT,
+                FOREIGN KEY (definition_id) REFERENCES Definitions(definition_id),
+                FOREIGN KEY (related_definition_id) REFERENCES Definitions(definition_id)
+            );
+        """)
+        
+        conn.commit()
+        conn.close()
         
         self.conn.commit()
     def insert_project(self, project_name):
@@ -635,3 +671,66 @@ class DatabaseManager:
         other_property_id = cursor.lastrowid
         conn.close()
         return other_property_id
+        
+    
+
+    def insert_definition(self, type, name):
+        """Inserts a new definition entry or retrieves the existing definition_id."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Check if the definition already exists
+        cursor.execute("SELECT definition_id FROM Definitions WHERE type = ? AND name = ?", (type, name))
+        result = cursor.fetchone()
+        
+        if result:
+            conn.close()
+            return result[0]  # Return existing definition_id
+
+        # Insert new definition
+        cursor.execute("INSERT INTO Definitions (type, name) VALUES (?, ?)", (type, name))
+        conn.commit()
+        definition_id = cursor.lastrowid
+        conn.close()
+        return definition_id
+
+    def insert_attribute(self, definition_id, attribute_key, attribute_value):
+        """Inserts a new attribute for a definition or updates it if it exists."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Check if the attribute already exists for this definition
+        cursor.execute("""
+            SELECT attribute_id FROM Attributes 
+            WHERE definition_id = ? AND attribute_key = ?
+        """, (definition_id, attribute_key))
+        result = cursor.fetchone()
+        
+        if result:
+            # Update existing attribute
+            cursor.execute("""
+                UPDATE Attributes SET attribute_value = ? 
+                WHERE attribute_id = ?
+            """, (attribute_value, result[0]))
+        else:
+            # Insert new attribute
+            cursor.execute("""
+                INSERT INTO Attributes (definition_id, attribute_key, attribute_value)
+                VALUES (?, ?, ?)
+            """, (definition_id, attribute_key, attribute_value))
+        
+        conn.commit()
+        conn.close()
+
+    def insert_relationship(self, definition_id, related_definition_id, relationship_type):
+        """Inserts a new relationship between definitions."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            INSERT OR IGNORE INTO Relationships (definition_id, related_definition_id, relationship_type)
+            VALUES (?, ?, ?)
+        """, (definition_id, related_definition_id, relationship_type))
+        
+        conn.commit()
+        conn.close()
