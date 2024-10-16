@@ -114,12 +114,16 @@ class PropertiesProcessor:
         callback_event.wait()
         return result_container["result"]
 
-    def _process_queues(self, property_file_id, queues):
+    def _process_queues(self, property_file_id, queues, pf_id):
         """Processes common queues and inserts them into the database."""
         for queue_name in queues:
             queue_type = queue_name.split('_')[-1]  # Assume queue type is the suffix like EVT, ERR, CPY
             queue_id = self._queue_insert_queue(queue_name, queue_type)
-            self._queue_insert_pap_queue(property_file_id, queue_id)
+            self._queue_insert_pap_queue(property_file_id, pf_id, queue_id)
+
+    def _queue_insert_pap_queue(self, property_file_id, pf_id, queue_id):
+        """Links a PAP and PF with a queue."""
+        self.db_queue.put((self.db_manager.insert_pap_queue, (property_file_id, pf_id, queue_id), None, {}))
 
     def _process_integration_servers(self, pap_id, integration_servers):
         """Processes and inserts integration servers for a specific PAP."""
@@ -134,8 +138,6 @@ class PropertiesProcessor:
         callback_event.wait()
         return result_container["result"]
 
-    def _queue_insert_pap_queue(self, property_file_id, queue_id):
-        self.db_queue.put((self.db_manager.insert_pap_queue, (property_file_id, queue_id), None, {}))
 
     def _queue_insert_database(self, property_file_id, db_name, environment, value):
         callback_event = threading.Event()
