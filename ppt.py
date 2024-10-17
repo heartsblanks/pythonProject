@@ -1,5 +1,4 @@
 import os
-import re
 from pptx import Presentation
 import comtypes.client
 
@@ -26,62 +25,79 @@ def convert_ppt_to_pptx(folder_path):
 
     powerpoint.Quit()
 
-def extract_content_from_pptx(folder_path):
-    # Define regex patterns for PAP, PF, and queue names
-    pap_pattern = r"\bPAP\w+"
-    pf_pattern = r"\bPF\w+"
-    queue_end_pattern = r"\b\w+_(EVT|CPY|ERR)\b"  # Matches end of a queue name with _EVT, _CPY, or _ERR
-
+def analyze_slide_flow(folder_path):
     results = []
 
     for filename in os.listdir(folder_path):
         if filename.endswith(".pptx"):
             file_path = os.path.join(folder_path, filename)
             presentation = Presentation(file_path)
-            file_data = {
+            slide_data = {
                 "filename": filename,
-                "PAP_matches": [],
-                "PF_matches": [],
-                "Queue_matches": []
+                "connections": []
             }
 
-            # Extract text from each slide and check for matches
-            for slide in presentation.slides:
+            # Process each slide
+            for slide_index, slide in enumerate(presentation.slides):
+                slide_shapes = []
+                slide_arrows = []
+
+                # Extract shapes and arrows
                 for shape in slide.shapes:
-                    if shape.has_text_frame:
-                        lines = shape.text_frame.text.splitlines()
-                        queue_name = ""
-                        
-                        for line in lines:
-                            # Accumulate queue name across lines ending with "_"
-                            if line.endswith("_"):
-                                queue_name += line.strip("_")  # Strip the trailing "_"
-                            else:
-                                # Append the last line to complete the queue name
-                                queue_name += line
-                                
-                                # Check if the full queue name matches the pattern
-                                if re.search(queue_end_pattern, queue_name):
-                                    file_data["Queue_matches"].append(queue_name)
-                                
-                                # Reset the queue name for the next one
-                                queue_name = ""
+                    if shape.is_placeholder or shape.has_text_frame:
+                        # Collect shapes with text (e.g., process blocks)
+                        slide_shapes.append({
+                            "name": shape.name,
+                            "left": shape.left,
+                            "top": shape.top,
+                            "width": shape.width,
+                            "height": shape.height,
+                            "text": shape.text_frame.text if shape.has_text_frame else ""
+                        })
+                    elif shape.shape_type == 3:  # Type 3 indicates a line (potential arrow)
+                        # Assume these are arrows
+                        slide_arrows.append({
+                            "left": shape.left,
+                            "top": shape.top,
+                            "width": shape.width,
+                            "height": shape.height,
+                            "rotation": shape.rotation
+                        })
 
-                        # Find matches for PAP and PF patterns
-                        text = shape.text_frame.text
-                        file_data["PAP_matches"].extend(re.findall(pap_pattern, text))
-                        file_data["PF_matches"].extend(re.findall(pf_pattern, text))
+                # Attempt to connect arrows to shapes
+                for arrow in slide_arrows:
+                    arrow_start_x = arrow["left"]
+                    arrow_start_y = arrow["top"]
+                    arrow_end_x = arrow["left"] + arrow["width"]
+                    arrow_end_y = arrow["top"] + arrow["height"]
 
-            results.append(file_data)
+                    for shape in slide_shapes:
+                        # Check if arrow is connected to the shape by comparing coordinates
+                        shape_left = shape["left"]
+                        shape_top = shape["top"]
+                        shape_right = shape["left"] + shape["width"]
+                        shape_bottom = shape["top"] + shape["height"]
+
+                        # Check if arrow ends near shape boundaries (basic overlap detection)
+                        if (shape_left - 100 < arrow_end_x < shape_right + 100 and
+                            shape_top - 100 < arrow_end_y < shape_bottom + 100):
+                            connection = {
+                                "from_shape": shape["text"],
+                                "to_shape": "",  # Placeholder for connected shape text
+                                "direction": "unknown"  # Placeholder for direction
+                            }
+                            # Add connection to slide data
+                            slide_data["connections"].append(connection)
+
+                results.append(slide_data)
 
     # Display results
-    for result in results:
-        print(f"File: {result['filename']}")
-        print(f"  PAP Matches: {', '.join(set(result['PAP_matches'])) if result['PAP_matches'] else 'None'}")
-        print(f"  PF Matches: {', '.join(set(result['PF_matches'])) if result['PF_matches'] else 'None'}")
-        print(f"  Queue Matches: {', '.join(set(result['Queue_matches'])) if result['Queue_matches'] else 'None'}\n")
+    for slide in results:
+        print(f"File: {slide['filename']}")
+        for conn in slide["connections"]:
+            print(f"  Connection: From '{conn['from_shape']}' to '{conn['to_shape']}' with direction '{conn['direction']}'")
 
 # Usage example
 folder_path = "/path/to/your/ppt/folder"  # Replace with your folder path
 convert_ppt_to_pptx(folder_path)  # First, convert .ppt to .pptx if needed
-extract_content_from_pptx(folder_path)  # Then, extract text content
+analyze_slide_flow(folder_path)  # Then, analyze slide flow direction
