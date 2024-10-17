@@ -49,3 +49,33 @@ def extract_info_from_files(folder_path):
 # Usage example
 folder_path = "/path/to/your/ppt/folder"  # Replace with your folder path
 extract_info_from_files(folder_path)
+
+import os
+import comtypes.client
+
+def convert_ppt_to_pptx(folder_path):
+    powerpoint = comtypes.client.CreateObject("PowerPoint.Application")
+    powerpoint.Visible = 1
+
+    for filename in os.listdir(folder_path):
+        if filename.endswith(".ppt"):
+            full_path = os.path.join(folder_path, filename)
+            pptx_path = os.path.join(folder_path, filename.replace(".ppt", ".pptx"))
+
+            try:
+                # Open and save as .pptx
+                presentation = powerpoint.Presentations.Open(full_path)
+                presentation.SaveAs(pptx_path, 24)  # 24 is the format ID for .pptx
+                presentation.Close()
+                
+                # Delete the original .ppt file after successful conversion
+                os.remove(full_path)
+                print(f"Converted {filename} to .pptx and removed the original .ppt file.")
+            except Exception as e:
+                print(f"Failed to convert {filename}: {e}")
+
+    powerpoint.Quit()
+
+# Usage example
+folder_path = "/path/to/your/ppt/folder"  # Replace with your folder path
+convert_ppt_to_pptx(folder_path)
