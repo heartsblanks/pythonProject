@@ -1,0 +1,83 @@
+import requests
+
+# Define the organization and repository as variables
+org = "your_org_or_user"  # Replace with your organization or username
+repo = "your_repo"        # Replace with your repository name
+
+# List of subflows with their names and paths
+subflows = [
+    {"name": "subflow1", "path": "subflows/path/to/subflow1.subflow"},
+    {"name": "subflow2", "path": "subflows/path/to/subflow2.subflow"},
+    {"name": "subflow3", "path": "subflows/path/to/subflow3.subflow"}
+]
+
+# GitHub Enterprise API details
+enterprise_base_url = "https://your-github-enterprise-instance.com/api/graphql"
+token = "YOUR_GITHUB_TOKEN"  # Replace with your actual token
+
+# Function to construct the GraphQL query
+def construct_query(subflows, org, repo):
+    query_start = f"""{{
+      repository(owner: "{org}", name: "{repo}") {{
+    """
+    
+    # Dynamically construct query for each subflow
+    query_middle = ""
+    for subflow in subflows:
+        query_middle += f"""
+        {subflow['name']}: object(expression: "main:{subflow['path']}") {{
+          ... on Blob {{
+            text
+          }}
+        }}
+        """
+    
+    query_end = """
+      }
+    }"""
+    
+    # Combine query parts
+    graphql_query = query_start + query_middle + query_end
+    return graphql_query
+
+# Function to fetch subflow content using GraphQL API
+def fetch_subflow_content(subflows, org, repo):
+    # Construct the query based on the subflow list
+    query = construct_query(subflows, org, repo)
+    
+    # Headers for the API request
+    headers = {
+        'Authorization': f'token {token}',
+        'Content-Type': 'application/json'
+    }
+    
+    # Send the request to GitHub's GraphQL API
+    response = requests.post(enterprise_base_url, json={'query': query}, headers=headers)
+    
+    # Check if the request was successful
+    if response.status_code == 200:
+        return response.json()
+    else:
+        print(f"Error: {response.status_code}")
+        print(response.text)
+        return None
+
+# Parse and print the subflow contents
+def parse_and_print_subflow_content(response):
+    if 'data' in response and 'repository' in response['data']:
+        repository_data = response['data']['repository']
+        
+        for subflow in subflows:
+            subflow_name = subflow['name']
+            if subflow_name in repository_data and 'text' in repository_data[subflow_name]:
+                content = repository_data[subflow_name]['text']
+                print(f"Content of {subflow_name}:")
+                print(content)
+                print("="*40)
+            else:
+                print(f"No content found for {subflow_name}")
+
+# Main execution
+response = fetch_subflow_content(subflows, org, repo)
+if response:
+    parse_and_print_subflow_content(response)
