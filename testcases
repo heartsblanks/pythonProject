@@ -32,29 +32,48 @@ class TestUpdateClasspathAndProject(unittest.TestCase):
         })
         
     @patch('xml.etree.ElementTree.parse')
-    @patch.object(ET.ElementTree, 'write')
-    def test_basic_valid_input(self, mock_write, mock_parse):
-        # Test basic valid input where dependencies are updated and added as expected
-        mock_parse.return_value = ET.ElementTree(ET.fromstring(self.sample_xml))
-        
-        # Capture the output of write to verify XML changes
-        output_capture = StringIO()
-        mock_write.side_effect = lambda file, encoding, xml_declaration, method, short_empty_elements: \
-            mock_parse.return_value.write(output_capture, encoding=encoding, xml_declaration=xml_declaration, method=method, short_empty_elements=short_empty_elements)
+@patch.object(ET.ElementTree, 'write')
+def test_basic_valid_input(self, mock_write, mock_parse):
+    # Configure the parse mock to use the sample XML from setUp
+    mock_parse.return_value = ET.ElementTree(ET.fromstring(self.sample_xml))
+    
+    # Capture the output of each write call in separate StringIO objects
+    output_captures = [StringIO() for _ in range(4)]
+    
+    # Define a side effect for mock_write that writes the modified XML to the appropriate output capture
+    def write_side_effect(file, encoding, xml_declaration, method, short_empty_elements):
+        # Use the current call count to determine which StringIO to write to
+        call_index = mock_write.call_count - 1
+        tree = mock_parse.return_value
+        tree.write(output_captures[call_index], encoding=encoding, xml_declaration=xml_declaration, method=method, short_empty_elements=short_empty_elements)
+    
+    # Assign the side effect to mock_write
+    mock_write.side_effect = write_side_effect
 
-        # Call the function under test
-        update_classpath_and_project(
-            repo_path='/dummy_repo_path',
-            project_mapping=self.project_mapping,
-            mig_projects=self.mig_projects,
-            application='MyApplication'
-        )
-        
-        # Verify XML changes
+    # Call the function under test
+    update_classpath_and_project(
+        repo_path='/dummy_repo_path',
+        project_mapping=self.project_mapping,
+        mig_projects=self.mig_projects,
+        application='MyApplication'
+    )
+    
+    # Assert that write was called four times, once for each project
+    self.assertEqual(mock_write.call_count, 4)
+    
+    # Verify XML changes for each project by checking the captured output
+    for i, output_capture in enumerate(output_captures):
         written_data = output_capture.getvalue()
-        self.assertIn('<project>NewProject1</project>', written_data)
-        self.assertIn('<project>NewProject2</project>', written_data)
-
+        # Example assertions: Customize these based on expected content for each project
+        # Assuming first two projects are NewProject1 and NewProject2, update based on your needs
+        if i == 0:
+            self.assertIn('<project>NewProject1</project>', written_data)
+        elif i == 1:
+            self.assertIn('<project>NewProject2</project>', written_data)
+        elif i == 2:
+            self.assertIn('<project>NewProject3</project>', written_data)
+        elif i == 3:
+            self.assertIn('<project>NewProject4</project>', written_data)
     @patch('xml.etree.ElementTree.parse')
     @patch.object(ET.ElementTree, 'write')
     def test_dependency_not_in_project_mapping(self, mock_write, mock_parse):
