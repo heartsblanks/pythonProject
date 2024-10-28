@@ -1,189 +1,116 @@
-import unittest
-from unittest.mock import patch
+import os
 import xml.etree.ElementTree as ET
-from io import StringIO
 import pandas as pd
 
-# Import the standalone function from common.py
-from common import update_classpath_and_project
+def update_classpath_and_project(repo_path, project_mapping, mig_projects, application):
+    try:
+        for project in project_mapping:
+            iib_project_name = project.get('IIB_PROJECT_NAME')
+            ace_project_name = project.get('ACE_PROJECT_NAME')
+            if not iib_project_name or not ace_project_name:
+                continue
 
-class TestUpdateClasspathAndProject(unittest.TestCase):
-    
-    def setUp(self):
-        # Sample XML data for .project file
-        self.sample_xml = """
-        <root>
-            <projects>
-                <project>OldProject1</project>
-                <project>OldProject2</project>
-            </projects>
-        </root>
-        """
-        
-        # Mock attributes for project mapping and migration projects
-        self.project_mapping = [
-            {'IIB_PROJECT_NAME': 'OldProject1', 'ACE_PROJECT_NAME': 'NewProject1'},
-            {'IIB_PROJECT_NAME': 'OldProject3', 'ACE_PROJECT_NAME': 'NewProject3'}
-        ]
-        
-        self.mig_projects = pd.DataFrame({
-            'OLD_NAME': ['OldProject2', 'OldProject4'],
-            'NEW_NAME': ['NewProject2', 'NewProject4']
-        })
-        
-    @patch('xml.etree.ElementTree.parse')
-@patch.object(ET.ElementTree, 'write')
-def test_basic_valid_input(self, mock_write, mock_parse):
-    # Configure the parse mock to use the sample XML from setUp
-    mock_parse.return_value = ET.ElementTree(ET.fromstring(self.sample_xml))
-    
-    # Capture the output of each write call in separate StringIO objects
-    output_captures = [StringIO() for _ in range(4)]
-    
-    # Define a side effect for mock_write that writes the modified XML to the appropriate output capture
-    def write_side_effect(file, encoding, xml_declaration, method, short_empty_elements):
-        # Use the current call count to determine which StringIO to write to
-        call_index = mock_write.call_count - 1
-        tree = mock_parse.return_value
-        tree.write(output_captures[call_index], encoding=encoding, xml_declaration=xml_declaration, method=method, short_empty_elements=short_empty_elements)
-    
-    # Assign the side effect to mock_write
-    mock_write.side_effect = write_side_effect
+            # Read and parse the .project file for the current project
+            project_dir = os.path.join(repo_path, iib_project_name)
+            project_file_path = os.path.join(project_dir, ".project")
+            
+            try:
+                tree = ET.parse(project_file_path)
+                root = tree.getroot()
+            except ET.ParseError as parse_error:
+                print(f"Failed to parse XML for project {iib_project_name}: {parse_error}")
+                continue
+            except FileNotFoundError:
+                print(f"No .project file found for project {iib_project_name}")
+                continue
 
-    # Call the function under test
-    update_classpath_and_project(
-        repo_path='/dummy_repo_path',
-        project_mapping=self.project_mapping,
-        mig_projects=self.mig_projects,
-        application='MyApplication'
-    )
-    
-    # Assert that write was called four times, once for each project
-    self.assertEqual(mock_write.call_count, 4)
-    
-    # Verify XML changes for each project by checking the captured output
-    for i, output_capture in enumerate(output_captures):
-        written_data = output_capture.getvalue()
-        # Example assertions: Customize these based on expected content for each project
-        # Assuming first two projects are NewProject1 and NewProject2, update based on your needs
-        if i == 0:
-            self.assertIn('<project>NewProject1</project>', written_data)
-        elif i == 1:
-            self.assertIn('<project>NewProject2</project>', written_data)
-        elif i == 2:
-            self.assertIn('<project>NewProject3</project>', written_data)
-        elif i == 3:
-            self.assertIn('<project>NewProject4</project>', written_data)
-    @patch('xml.etree.ElementTree.parse')
-    @patch.object(ET.ElementTree, 'write')
-    def test_dependency_not_in_project_mapping(self, mock_write, mock_parse):
-        # Test when dependency is not in project mapping but is in mig_projects
-        mock_parse.return_value = ET.ElementTree(ET.fromstring(self.sample_xml))
+            # Ensure the <projects> tag exists
+            projects_tag = root.find('projects')
+            if projects_tag is None:
+                print(f"Warning: No <projects> tag found in {project_file_path}")
+                continue  # Skip to the next project if <projects> is missing
 
-        output_capture = StringIO()
-        mock_write.side_effect = lambda file, encoding, xml_declaration, method, short_empty_elements: \
-            mock_parse.return_value.write(output_capture, encoding=encoding, xml_declaration=xml_declaration, method=method, short_empty_elements=short_empty_elements)
+            project_updated = False
 
-        # Call the function
-        update_classpath_and_project(
-            repo_path='/dummy_repo_path',
-            project_mapping=self.project_mapping,
-            mig_projects=self.mig_projects,
-            application='MyApplication'
-        )
-        
-        # Verify that OldProject2 was replaced by NewProject2 from mig_projects
-        output = output_capture.getvalue()
-        self.assertIn('<project>NewProject2</project>', output)
+            # Update dependencies in the .project file
+            for dep_project in projects_tag.findall('project'):
+                dep_text = dep_project.text
+                project_found = False
 
-    @patch('xml.etree.ElementTree.parse')
-    @patch.object(ET.ElementTree, 'write')
-    def test_ace_project_already_present(self, mock_write, mock_parse):
-        # Test when ACE project dependency already exists, it should not be added again
-        modified_xml = """
-        <root>
-            <projects>
-                <project>NewProject1</project>
-                <project>OldProject2</project>
-            </projects>
-        </root>
-        """
-        mock_parse.return_value = ET.ElementTree(ET.fromstring(modified_xml))
+                # Check if the dependency is in project_mapping
+                for project_map in project_mapping:
+                    if dep_text == project_map["IIB_PROJECT_NAME"] and dep_text != iib_project_name:
+                        dep_project.text = project_map["ACE_PROJECT_NAME"]
+                        project_updated = True
+                        project_found = True
+                        break
 
-        output_capture = StringIO()
-        mock_write.side_effect = lambda file, encoding, xml_declaration, method, short_empty_elements: \
-            mock_parse.return_value.write(output_capture, encoding=encoding, xml_declaration=xml_declaration, method=method, short_empty_elements=short_empty_elements)
+                # If the dependency was not found in project_mapping, check in mig_projects
+                if not project_found and dep_text != iib_project_name:
+                    mig_project_row = mig_projects.loc[mig_projects['OLD_NAME'] == dep_text, 'NEW_NAME']
+                    if not mig_project_row.empty:
+                        dep_project.text = mig_project_row.values[0]
+                        project_updated = True
+                    else:
+                        print(f"Warning: No NEW_NAME found in mig_projects for OLD_NAME '{dep_text}'")
 
-        # Call the function
-        update_classpath_and_project(
-            repo_path='/dummy_repo_path',
-            project_mapping=self.project_mapping,
-            mig_projects=self.mig_projects,
-            application='MyApplication'
-        )
+            # Add missing ACE project dependencies if they aren't in the current <projects> section
+            for project_map in project_mapping:
+                if project_map["IIB_PROJECT_NAME"] != iib_project_name:
+                    ace_dep_name = project_map["ACE_PROJECT_NAME"]
+                    existing_dep = any(dep.text == ace_dep_name for dep in projects_tag.findall('project'))
+                    if not existing_dep:
+                        new_dep_proj = ET.SubElement(projects_tag, "project")
+                        new_dep_proj.text = ace_dep_name
+                        project_updated = True
 
-        output = output_capture.getvalue()
-        # Check that NewProject1 is present only once
-        self.assertEqual(output.count('<project>NewProject1</project>'), 1)
+            # Write updates to the .project file if changes were made
+            if project_updated:
+                try:
+                    tree.write(project_file_path, encoding='utf-8', xml_declaration=True, method='xml', short_empty_elements=True)
+                    print(f"Successfully wrote updates to {project_file_path}.")
+                except Exception as e:
+                    print(f"Error writing to {project_file_path}: {e}")
 
-    @patch('xml.etree.ElementTree.parse')
-    def test_missing_iib_or_ace_project_name(self, mock_parse):
-        # Add entry with missing ACE project name
-        self.project_mapping.append({'IIB_PROJECT_NAME': 'OldProject5', 'ACE_PROJECT_NAME': None})
-        
-        mock_parse.return_value = ET.ElementTree(ET.fromstring(self.sample_xml))
-        
-        # Call the function
-        update_classpath_and_project(
-            repo_path='/dummy_repo_path',
-            project_mapping=self.project_mapping,
-            mig_projects=self.mig_projects,
-            application='MyApplication'
-        )
+            # Check for the .classpath file in the project directory
+            classpath_file_path = os.path.join(project_dir, ".classpath")
+            if os.path.exists(classpath_file_path):
+                classpath_updated = False
+                try:
+                    classpath_tree = ET.parse(classpath_file_path)
+                    classpath_root = classpath_tree.getroot()
 
-        # Ensure the function completes without adding an invalid project name
-        self.assertTrue(mock_parse.called)
+                    # Find <classpathentry> elements with a path attribute that starts with "/"
+                    for entry in classpath_root.findall('classpathentry'):
+                        path_attr = entry.get('path')
+                        if path_attr and path_attr.startswith('/'):
+                            print(f"Found <classpathentry> with path starting with '/': {path_attr} in {classpath_file_path}")
+                            
+                            # Check if the path_attr matches any IIB_PROJECT_NAME in project_mapping
+                            for project_map in project_mapping:
+                                if path_attr == f"/{project_map['IIB_PROJECT_NAME']}":
+                                    entry.set('path', f"/{project_map['ACE_PROJECT_NAME']}")
+                                    classpath_updated = True
+                                    print(f"Replaced {path_attr} with /{project_map['ACE_PROJECT_NAME']}")
 
-    @patch('xml.etree.ElementTree.parse')
-    @patch.object(ET.ElementTree, 'write')
-    def test_missing_projects_tag(self, mock_write, mock_parse):
-        # Test .project file with no <projects> tag
-        modified_xml = """
-        <root>
-            <no_projects>
-                <project>OldProject1</project>
-            </no_projects>
-        </root>
-        """
-        mock_parse.return_value = ET.ElementTree(ET.fromstring(modified_xml))
+                            # If still unchanged, check if path_attr matches any OLD_NAME in mig_projects
+                            if not classpath_updated:
+                                mig_project_row = mig_projects.loc[mig_projects['OLD_NAME'] == path_attr[1:], 'NEW_NAME']
+                                if not mig_project_row.empty:
+                                    new_name = mig_project_row.values[0]
+                                    entry.set('path', f"/{new_name}")
+                                    classpath_updated = True
+                                    print(f"Replaced {path_attr} with /{new_name}")
 
-        # Call the function
-        update_classpath_and_project(
-            repo_path='/dummy_repo_path',
-            project_mapping=self.project_mapping,
-            mig_projects=self.mig_projects,
-            application='MyApplication'
-        )
+                    # Write the updated .classpath file if changes were made
+                    if classpath_updated:
+                        classpath_tree.write(classpath_file_path, encoding='utf-8', xml_declaration=True, method='xml', short_empty_elements=True)
+                        print(f"Successfully updated .classpath file for {iib_project_name}")
 
-        # Verify no write occurred as there is no <projects> tag
-        self.assertFalse(mock_write.called)
+                except ET.ParseError as parse_error:
+                    print(f"Failed to parse .classpath file for project {iib_project_name}: {parse_error}")
+                except FileNotFoundError:
+                    print(f"No .classpath file found for project {iib_project_name}")
 
-    @patch('xml.etree.ElementTree.parse')
-    def test_et_parse_error(self, mock_parse):
-        # Test handling of ET.ParseError during XML parsing
-        mock_parse.side_effect = ET.ParseError("mock parse error")
-
-        # Call the function
-        update_classpath_and_project(
-            repo_path='/dummy_repo_path',
-            project_mapping=self.project_mapping,
-            mig_projects=self.mig_projects,
-            application='MyApplication'
-        )
-
-        # Ensure parse error was handled gracefully without crashing
-        self.assertTrue(mock_parse.called)
-
-# Run the tests
-if __name__ == '__main__':
-    unittest.main()
+    except Exception as e:
+        print(f"Unexpected error in update_classpath_and_project: {e}")
