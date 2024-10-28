@@ -1,0 +1,139 @@
+import unittest
+from unittest.mock import patch, MagicMock
+import xml.etree.ElementTree as ET
+import pandas as pd
+from io import StringIO
+
+# Sample XML data for the `.project` file
+sample_xml = """
+<root>
+    <projects>
+        <project>OldProject1</project>
+        <project>OldProject2</project>
+    </projects>
+</root>
+"""
+
+class TestUpdateClasspathAndProject(unittest.TestCase):
+
+    def setUp(self):
+        # Set up sample data for project mapping and migration projects
+        self.project_mapping = [
+            {'IIB_PROJECT_NAME': 'OldProject1', 'ACE_PROJECT_NAME': 'NewProject1'},
+            {'IIB_PROJECT_NAME': 'OldProject3', 'ACE_PROJECT_NAME': 'NewProject3'}
+        ]
+        
+        # Create a mock DataFrame for self.mig_projects
+        self.mig_projects = pd.DataFrame({
+            'OLD_NAME': ['OldProject2', 'OldProject4'],
+            'NEW_NAME': ['NewProject2', 'NewProject4']
+        })
+        
+        # Initialize the object with sample repo path and mock attributes
+        self.obj = type('MockObject', (object,), {
+            'repo_path': '/dummy_repo_path',
+            'project_mapping': self.project_mapping,
+            'mig_projects': self.mig_projects
+        })()
+        
+    @patch('xml.etree.ElementTree.parse')
+    @patch.object(ET.ElementTree, 'write')
+    def test_basic_valid_input(self, mock_write, mock_parse):
+        # Test basic valid input where dependencies are updated and added as expected
+        mock_parse.return_value = ET.ElementTree(ET.fromstring(sample_xml))
+        
+        # Call the method
+        self.obj.update_classpath_and_project()
+        
+        # Check that file.write was called to save changes
+        self.assertTrue(mock_write.called)
+
+    @patch('xml.etree.ElementTree.parse')
+    @patch.object(ET.ElementTree, 'write')
+    def test_dependency_not_in_project_mapping(self, mock_write, mock_parse):
+        # Test when dependency is not in project mapping but is in mig_projects
+        mock_parse.return_value = ET.ElementTree(ET.fromstring(sample_xml))
+
+        # Call the method
+        self.obj.update_classpath_and_project()
+
+        # Assert that the method replaced OldProject2 with NewProject2 from mig_projects
+        output_capture = StringIO()
+        mock_write.side_effect = lambda file: mock_parse.return_value.write(output_capture, encoding='utf-8')
+        
+        # Verify OldProject2 is replaced by NewProject2
+        output = output_capture.getvalue()
+        self.assertIn('<project>NewProject2</project>', output)
+
+    @patch('xml.etree.ElementTree.parse')
+    @patch.object(ET.ElementTree, 'write')
+    def test_ace_project_already_present(self, mock_write, mock_parse):
+        # Test when ACE project dependency already exists, and it should not be added again
+        modified_xml = """
+        <root>
+            <projects>
+                <project>NewProject1</project>
+                <project>OldProject2</project>
+            </projects>
+        </root>
+        """
+        mock_parse.return_value = ET.ElementTree(ET.fromstring(modified_xml))
+
+        # Call the method
+        self.obj.update_classpath_and_project()
+
+        # Capture the output to verify no duplicate additions
+        output_capture = StringIO()
+        mock_write.side_effect = lambda file: mock_parse.return_value.write(output_capture, encoding='utf-8')
+        
+        # Verify that NewProject1 is not added again
+        output = output_capture.getvalue()
+        self.assertEqual(output.count('<project>NewProject1</project>'), 1)
+
+    @patch('xml.etree.ElementTree.parse')
+    def test_missing_iib_or_ace_project_name(self, mock_parse):
+        # Test handling of missing IIB or ACE project names in project_mapping
+        self.project_mapping.append({'IIB_PROJECT_NAME': None, 'ACE_PROJECT_NAME': 'NewProject5'})
+        
+        # Mock XML parsing
+        mock_parse.return_value = ET.ElementTree(ET.fromstring(sample_xml))
+        
+        # Call the method
+        self.obj.update_classpath_and_project()
+
+        # Verify that no exception is raised and XML file processing continues
+        self.assertTrue(mock_parse.called)
+
+    @patch('xml.etree.ElementTree.parse')
+    @patch.object(ET.ElementTree, 'write')
+    def test_missing_projects_tag(self, mock_write, mock_parse):
+        # Test handling of .project files with no <projects> tag
+        modified_xml = """
+        <root>
+            <no_projects>
+                <project>OldProject1</project>
+            </no_projects>
+        </root>
+        """
+        mock_parse.return_value = ET.ElementTree(ET.fromstring(modified_xml))
+
+        # Call the method
+        self.obj.update_classpath_and_project()
+
+        # Verify that XML write is not called since no <projects> tag exists
+        self.assertFalse(mock_write.called)
+
+    @patch('xml.etree.ElementTree.parse')
+    def test_et_parse_error(self, mock_parse):
+        # Test handling of ET.ParseError during XML parsing
+        mock_parse.side_effect = ET.ParseError("mock parse error")
+
+        # Call the method
+        self.obj.update_classpath_and_project()
+
+        # Verify that parse error was handled gracefully
+        self.assertTrue(mock_parse.called)
+
+# Run the tests
+if __name__ == '__main__':
+    unittest.main()
