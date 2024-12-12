@@ -1,0 +1,49 @@
+@echo off
+
+rem Enable support for delayed environment variable expansion
+setlocal enabledelayedexpansion
+
+rem Set the name and path of the virtual environment
+set VENV_NAME=MystiqueEnv
+set VENV_PATH=%CD%\venv\%VENV_NAME%
+
+rem Set the PYTHONIOENCODING environment variable to UTF-8
+set PYTHONIOENCODING=utf-8
+
+rem Check if the virtual environment exists
+if not exist %VENV_PATH%\Scripts\python.exe (
+    echo Creating virtual environment...
+    python -m venv %VENV_PATH%
+    if %errorlevel% neq 0 (
+        echo Failed to create virtual environment.
+        exit /b 1
+    )
+    echo Successfully created virtual environment.
+)
+
+rem Activate the virtual environment
+echo Activating the virtual environment...
+call %VENV_PATH%\Scripts\activate.bat
+
+rem Upgrade pip to the latest version
+echo Upgrading pip to the latest version...
+pip install --upgrade pip
+
+rem Install all required packages in bulk from requirements.txt
+if exist requirements.txt (
+    echo Installing packages from requirements.txt...
+    pip install -r requirements.txt
+    if %errorlevel% neq 0 (
+        echo Failed to install some packages.
+        exit /b 1
+    )
+) else (
+    echo requirements.txt file not found. Skipping package installation.
+)
+
+rem Run the Python script
+echo Running MYSTIQUE App...
+start /B "" pythonw main.pyw
+
+rem Exit the script
+exit /b
