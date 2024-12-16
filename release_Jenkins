@@ -22,15 +22,39 @@ pipeline {
         stage('Determine Release Version') {
             steps {
                 script {
-                    // Determine release version logic
-                    env.RELEASE_VERSION = "v1.0.0" // Replace with dynamic logic
+                    def latestTag = sh(script: "git describe --tags `git rev-list --tags --max-count=1` || echo 'v0.0.0'", returnStdout: true).trim()
+                    def versionParts = latestTag.replace('v', '').split('\\.')
+                    def major = versionParts[0].toInteger()
+                    def minor = versionParts[1].toInteger()
+                    def patch = versionParts[2].toInteger()
+
+                    if (env.BRANCH_NAME == MASTER_BRANCH) {
+                        // Determine major or minor release based on trigger type
+                        if (currentBuild.getBuildCauses().any { it instanceof hudson.triggers.SCMTrigger$SCMTriggerCause }) {
+                            minor += 1 // Commit: Minor version
+                        } else {
+                            major += 1 // Push: Major version
+                            minor = 0
+                            patch = 0
+                        }
+                        env.RELEASE_VERSION = "v${major}.${minor}.${patch}"
+                    } else if (env.BRANCH_NAME.startsWith("feature/")) {
+                        // Feature branch: Use snapshot version
+                        env.RELEASE_VERSION = "v${major}.${minor}.${patch}-SNAPSHOT"
+                    } else {
+                        // Other branches: Default versioning
+                        env.RELEASE_VERSION = "v${major}.${minor}.${patch}-DEV"
+                    }
+
+                    echo "Release version determined: ${env.RELEASE_VERSION}"
                 }
             }
         }
 
         stage('Build and Test') {
             steps {
-                echo "Running build and tests..."
+                echo "Running build and tests for branch: ${env.BRANCH_NAME}"
+                echo "Release version: ${env.RELEASE_VERSION}"
             }
         }
     }
@@ -40,36 +64,47 @@ pipeline {
             script {
                 def message = """
                     **Build Success** 🎉
-                    - **Branch:** ${env.GIT_BRANCH}
+                    - **Branch:** ${env.BRANCH_NAME}
                     - **Release Version:** ${env.RELEASE_VERSION}
                     - **Repository:** [${env.GIT_REPO}](<${env.GIT_REPO}>)
                 """
-                // Notify via Teams with retry logic
+                
+                // Notify Teams
                 sendTeamsNotification(message)
 
-                // Notify via email
-                emailext(
-                    subject: "✅ Success: Branch ${env.GIT_BRANCH}",
-                    body: message.replaceAll("\\*\\*", ""), // Remove markdown for plain email
-                    mimeType: 'text/html',
-                    to: "${SUCCESS_RECIPIENTS}"
-                )
+                // Notify email based on branch
+                if (env.BRANCH_NAME == MASTER_BRANCH) {
+                    emailext(
+                        subject: "✅ Success: Release Created - ${env.RELEASE_VERSION}",
+                        body: message.replaceAll("\\*\\*", ""), // Remove markdown for plain email
+                        mimeType: 'text/html',
+                        to: "${SUCCESS_RECIPIENTS}"
+                    )
+                } else {
+                    emailext(
+                        subject: "✅ Success: Build for Branch ${env.BRANCH_NAME}",
+                        body: message.replaceAll("\\*\\*", ""),
+                        mimeType: 'text/html',
+                        to: "${FAILURE_RECIPIENTS}" // Notify developers for non-master branches
+                    )
+                }
             }
         }
         failure {
             script {
                 def message = """
                     **Build Failure** ❌
-                    - **Branch:** ${env.GIT_BRANCH}
+                    - **Branch:** ${env.BRANCH_NAME}
                     - **Repository:** [${env.GIT_REPO}](<${env.GIT_REPO}>)
                     - Check Jenkins logs for details.
                 """
-                // Notify via Teams with retry logic
+
+                // Notify Teams
                 sendTeamsNotification(message)
 
-                // Notify via email
+                // Notify email for failures
                 emailext(
-                    subject: "❌ Failure: Branch ${env.GIT_BRANCH}",
+                    subject: "❌ Failure: Build for Branch ${env.BRANCH_NAME}",
                     body: message.replaceAll("\\*\\*", ""),
                     mimeType: 'text/html',
                     to: "${FAILURE_RECIPIENTS}"
@@ -96,12 +131,12 @@ def sendTeamsNotification(String message) {
                 requestBody: """
                     {
                         "text": "${message}",
-                        "themeColor": "0076D7", // Optional: Customize message color
+                        "themeColor": "0076D7",
                         "summary": "Jenkins Notification",
                         "sections": [{
                             "activityTitle": "Jenkins Notification",
                             "activitySubtitle": "Triggered by Jenkins Pipeline",
-                            "activityImage": "${env.TEAMS_ICON_URL}", // Custom icon
+                            "activityImage": "${env.TEAMS_ICON_URL}",
                             "text": "${message}"
                         }]
                     }
