@@ -1,0 +1,122 @@
+pipeline {
+    agent any
+
+    environment {
+        GIT_REPO = "git@github.com:your-organization/your-repository.git"
+        MASTER_BRANCH = "master"
+        FAILURE_RECIPIENTS = "dev1@example.com,dev2@example.com"
+        SUCCESS_RECIPIENTS = "group1@example.com,group2@example.com"
+        TEAMS_WEBHOOK = credentials('teams-webhook') // Jenkins credential for Teams webhook URL
+        TEAMS_ICON_URL = "https://example.com/jenkins-icon.png" // Replace with your custom icon URL
+    }
+
+    stages {
+        stage('Checkout Code') {
+            steps {
+                checkout([$class: 'GitSCM',
+                          branches: [[name: "${env.GIT_BRANCH}"]],
+                          userRemoteConfigs: [[url: "${env.GIT_REPO}"]]])
+            }
+        }
+
+        stage('Determine Release Version') {
+            steps {
+                script {
+                    // Determine release version logic
+                    env.RELEASE_VERSION = "v1.0.0" // Replace with dynamic logic
+                }
+            }
+        }
+
+        stage('Build and Test') {
+            steps {
+                echo "Running build and tests..."
+            }
+        }
+    }
+
+    post {
+        success {
+            script {
+                def message = """
+                    **Build Success** 🎉
+                    - **Branch:** ${env.GIT_BRANCH}
+                    - **Release Version:** ${env.RELEASE_VERSION}
+                    - **Repository:** [${env.GIT_REPO}](<${env.GIT_REPO}>)
+                """
+                // Notify via Teams with retry logic
+                sendTeamsNotification(message)
+
+                // Notify via email
+                emailext(
+                    subject: "✅ Success: Branch ${env.GIT_BRANCH}",
+                    body: message.replaceAll("\\*\\*", ""), // Remove markdown for plain email
+                    mimeType: 'text/html',
+                    to: "${SUCCESS_RECIPIENTS}"
+                )
+            }
+        }
+        failure {
+            script {
+                def message = """
+                    **Build Failure** ❌
+                    - **Branch:** ${env.GIT_BRANCH}
+                    - **Repository:** [${env.GIT_REPO}](<${env.GIT_REPO}>)
+                    - Check Jenkins logs for details.
+                """
+                // Notify via Teams with retry logic
+                sendTeamsNotification(message)
+
+                // Notify via email
+                emailext(
+                    subject: "❌ Failure: Branch ${env.GIT_BRANCH}",
+                    body: message.replaceAll("\\*\\*", ""),
+                    mimeType: 'text/html',
+                    to: "${FAILURE_RECIPIENTS}"
+                )
+            }
+        }
+    }
+}
+
+// Function to send a message to Microsoft Teams with retry logic
+def sendTeamsNotification(String message) {
+    def maxRetries = 3
+    def retryDelay = 5 // seconds
+    def retryCount = 0
+    def success = false
+
+    while (retryCount < maxRetries && !success) {
+        try {
+            // Send the Teams notification
+            httpRequest(
+                httpMode: 'POST',
+                url: "${env.TEAMS_WEBHOOK}",
+                contentType: 'APPLICATION_JSON',
+                requestBody: """
+                    {
+                        "text": "${message}",
+                        "themeColor": "0076D7", // Optional: Customize message color
+                        "summary": "Jenkins Notification",
+                        "sections": [{
+                            "activityTitle": "Jenkins Notification",
+                            "activitySubtitle": "Triggered by Jenkins Pipeline",
+                            "activityImage": "${env.TEAMS_ICON_URL}", // Custom icon
+                            "text": "${message}"
+                        }]
+                    }
+                """
+            )
+            success = true
+        } catch (Exception e) {
+            retryCount++
+            if (retryCount < maxRetries) {
+                echo "Teams notification failed. Retrying in ${retryDelay} seconds... (Attempt ${retryCount} of ${maxRetries})"
+                sleep(retryDelay)
+            } else {
+                echo "Failed to send Teams notification after ${maxRetries} attempts."
+                error("Teams notification failed: ${e.message}")
+            }
+        }
+    }
+}
