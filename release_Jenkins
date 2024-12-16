@@ -2,163 +2,94 @@ pipeline {
     agent any
 
     environment {
-        GIT_REPO = "git@github.com:your-organization/your-repository.git"
-        MASTER_BRANCH = "master"
-        FAILURE_RECIPIENTS = "dev1@example.com,dev2@example.com"
-        SUCCESS_RECIPIENTS = "group1@example.com,group2@example.com"
-        TEAMS_WEBHOOK = credentials('teams-webhook') // Jenkins credential for Teams webhook URL
-        TEAMS_ICON_URL = "https://example.com/jenkins-icon.png" // Replace with your custom icon URL
-        GITHUB_TOKEN = credentials('github-token') // Personal Access Token for GitHub API
+        GIT_REPO = "https://<GITHUB_ENTERPRISE_URL>/<organization>/<repository>.git"
+        GITHUB_TOKEN = credentials('github-token') // GitHub token stored in Jenkins credentials
     }
 
     stages {
         stage('Checkout Code') {
             steps {
-                checkout([$class: 'GitSCM',
-                          branches: [[name: "${env.BRANCH_NAME}"]],
-                          userRemoteConfigs: [[url: "${env.GIT_REPO}"]]])
+                script {
+                    echo "Checking out code from branch: ${env.BRANCH_NAME}"
+                    checkout([
+                        $class: 'GitSCM',
+                        branches: [[name: "${env.BRANCH_NAME}"]],
+                        userRemoteConfigs: [[
+                            url: "${GIT_REPO}",
+                            credentialsId: 'github-token'
+                        ]]
+                    ])
+                }
             }
         }
 
-        stage('Determine Release Version') {
+        stage('Detect PR Merge to Master') {
+            when {
+                allOf {
+                    branch 'master'
+                    expression { return env.CHANGE_ID != null && env.CHANGE_TARGET == 'master' }
+                }
+            }
             steps {
                 script {
+                    echo "Pull request merged into master detected."
+                }
+            }
+        }
+
+        stage('Determine Tag Version') {
+            when {
+                branch 'master'
+            }
+            steps {
+                script {
+                    // Fetch the latest tag
                     def latestTag = sh(script: "git describe --tags `git rev-list --tags --max-count=1` || echo 'v0.0.0'", returnStdout: true).trim()
                     def versionParts = latestTag.replace('v', '').split('\\.')
                     def major = versionParts[0].toInteger()
                     def minor = versionParts[1].toInteger()
                     def patch = versionParts[2].toInteger()
 
-                    if (env.BRANCH_NAME == MASTER_BRANCH) {
-                        if (currentBuild.getBuildCauses().any { it instanceof hudson.triggers.SCMTrigger$SCMTriggerCause }) {
-                            minor += 1 // Increment minor version for commits
-                        } else {
-                            major += 1 // Increment major version for push
-                            minor = 0
-                            patch = 0
-                        }
-                    } else if (env.BRANCH_NAME.startsWith("hotfix/")) {
-                        patch += 1 // Increment patch version
-                    } else if (env.BRANCH_NAME.startsWith("feature/")) {
-                        env.RELEASE_VERSION = "v${major}.${minor}.${patch}-SNAPSHOT"
-                        return
-                    } else {
-                        env.RELEASE_VERSION = "v${major}.${minor}.${patch}-DEV"
-                        return
-                    }
+                    // Increment major version for PR merges
+                    echo "Incrementing major version for pull request merge."
+                    major += 1
+                    minor = 0
+                    patch = 0
 
+                    // Set the release version
                     env.RELEASE_VERSION = "v${major}.${minor}.${patch}"
-                    echo "Determined release version: ${env.RELEASE_VERSION}"
+                    echo "Determined major version: ${env.RELEASE_VERSION}"
                 }
             }
         }
 
-        stage('Tag and Push') {
+        stage('Tag and Push Major Version') {
             when {
-                expression { env.BRANCH_NAME == MASTER_BRANCH } // Only tag master branch
+                branch 'master'
             }
             steps {
                 script {
-                    echo "Tagging repository with version ${env.RELEASE_VERSION}"
+                    echo "Tagging master branch with version ${env.RELEASE_VERSION}"
+
+                    // Configure Git user
                     sh """
-                        git config user.name "Jenkins"
+                        git config user.name "Jenkins CI"
                         git config user.email "jenkins@example.com"
-                        git tag -a ${env.RELEASE_VERSION} -m "Release ${env.RELEASE_VERSION}"
+                        git tag -a ${env.RELEASE_VERSION} -m "Major version release ${env.RELEASE_VERSION}"
                         git push origin ${env.RELEASE_VERSION}
                     """
-                    echo "Tag pushed: ${env.RELEASE_VERSION}"
+                    echo "Major version tag ${env.RELEASE_VERSION} pushed successfully."
                 }
-            }
-        }
-
-        stage('Create GitHub Release') {
-            when {
-                expression { env.BRANCH_NAME == MASTER_BRANCH } // Only create release for master
-            }
-            steps {
-                script {
-                    echo "Creating GitHub release for version ${env.RELEASE_VERSION}"
-                    def changelog = sh(script: "git log -1 --pretty=format:'%h %s (%an)'", returnStdout: true).trim()
-
-                    httpRequest(
-                        httpMode: 'POST',
-                        url: "https://api.github.com/repos/your-organization/your-repository/releases",
-                        customHeaders: [[name: 'Authorization', value: "Bearer ${env.GITHUB_TOKEN}"]],
-                        contentType: 'APPLICATION_JSON',
-                        requestBody: """
-                            {
-                                "tag_name": "${env.RELEASE_VERSION}",
-                                "name": "Release ${env.RELEASE_VERSION}",
-                                "body": "${changelog}",
-                                "draft": false,
-                                "prerelease": false
-                            }
-                        """
-                    )
-                    echo "GitHub release created for version ${env.RELEASE_VERSION}"
-                }
-            }
-        }
-
-        stage('Build and Test') {
-            steps {
-                echo "Running build and tests for branch: ${env.BRANCH_NAME}"
-                echo "Release version: ${env.RELEASE_VERSION}"
             }
         }
     }
 
     post {
         success {
-            script {
-                def message = """
-                    **Build Success** 🎉
-                    - **Branch:** ${env.BRANCH_NAME}
-                    - **Release Version:** ${env.RELEASE_VERSION}
-                    - **Repository:** [${env.GIT_REPO}](<${env.GIT_REPO}>)
-                """
-                
-                // Notify Teams
-                sendTeamsNotification(message)
-
-                // Notify email based on branch
-                if (env.BRANCH_NAME == MASTER_BRANCH) {
-                    emailext(
-                        subject: "✅ Success: Release Created - ${env.RELEASE_VERSION}",
-                        body: message.replaceAll("\\*\\*", ""), // Remove markdown for plain email
-                        mimeType: 'text/html',
-                        to: "${SUCCESS_RECIPIENTS}"
-                    )
-                } else {
-                    emailext(
-                        subject: "✅ Success: Build for Branch ${env.BRANCH_NAME}",
-                        body: message.replaceAll("\\*\\*", ""),
-                        mimeType: 'text/html',
-                        to: "${FAILURE_RECIPIENTS}" // Notify developers for non-master branches
-                    )
-                }
-            }
+            echo "Build succeeded for branch: ${env.BRANCH_NAME}"
         }
         failure {
-            script {
-                def message = """
-                    **Build Failure** ❌
-                    - **Branch:** ${env.BRANCH_NAME}
-                    - **Repository:** [${env.GIT_REPO}](<${env.GIT_REPO}>)
-                    - Check Jenkins logs for details.
-                """
-
-                // Notify Teams
-                sendTeamsNotification(message)
-
-                // Notify email for failures
-                emailext(
-                    subject: "❌ Failure: Build for Branch ${env.BRANCH_NAME}",
-                    body: message.replaceAll("\\*\\*", ""),
-                    mimeType: 'text/html',
-                    to: "${FAILURE_RECIPIENTS}"
-                )
-            }
+            echo "Build failed for branch: ${env.BRANCH_NAME}"
         }
     }
 }
