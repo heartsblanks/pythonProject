@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        GIT_REPO = "https://<GITHUB_ENTERPRISE_URL>/<organization>/<repository>.git"
+        GIT_REPO = "git@<GITHUB_ENTERPRISE_HOST>:<organization>/<repository>.git"
         GITHUB_TOKEN = credentials('github-token') // GitHub token stored in Jenkins credentials
     }
 
@@ -16,7 +16,7 @@ pipeline {
                         branches: [[name: "${env.BRANCH_NAME}"]],
                         userRemoteConfigs: [[
                             url: "${GIT_REPO}",
-                            credentialsId: 'github-token'
+                            credentialsId: 'github-ssh-key' // SSH credentials ID
                         ]]
                     ])
                 }
@@ -63,6 +63,30 @@ pipeline {
             }
         }
 
+        stage('Generate Release Notes') {
+            when {
+                expression { env.CHANGE_ID != null && env.CHANGE_TARGET == 'master' }
+            }
+            steps {
+                script {
+                    def previousTag = sh(script: "git describe --tags `git rev-list --tags --max-count=1` || echo 'v0.0.0'", returnStdout: true).trim()
+                    echo "Previous tag: ${previousTag}"
+
+                    // Collect commits since the last tag
+                    def releaseNotes = sh(script: """
+                        git log ${previousTag}..HEAD --pretty=format:'- %s (%h)' | tee release-notes.txt
+                    """, returnStdout: true).trim()
+
+                    if (releaseNotes) {
+                        echo "Generated release notes:\n${releaseNotes}"
+                        env.RELEASE_NOTES = releaseNotes
+                    } else {
+                        error("No commits found for release notes.")
+                    }
+                }
+            }
+        }
+
         stage('Tag and Push') {
             steps {
                 script {
@@ -78,25 +102,43 @@ pipeline {
             }
         }
 
-        stage('Build and Test') {
+        stage('Create GitHub Release') {
+            when {
+                expression { env.CHANGE_ID != null && env.CHANGE_TARGET == 'master' }
+            }
             steps {
-                echo "Running build and tests for branch: ${env.BRANCH_NAME}"
+                script {
+                    echo "Creating GitHub release for version ${env.RELEASE_VERSION}"
+
+                    def response = httpRequest(
+                        httpMode: 'POST',
+                        url: "https://<GITHUB_ENTERPRISE_HOST>/api/v3/repos/<organization>/<repository>/releases",
+                        customHeaders: [[name: 'Authorization', value: "token ${env.GITHUB_TOKEN}"]],
+                        contentType: 'APPLICATION_JSON',
+                        requestBody: """
+                            {
+                                "tag_name": "${env.RELEASE_VERSION}",
+                                "target_commitish": "master",
+                                "name": "${env.RELEASE_VERSION}",
+                                "body": "${env.RELEASE_NOTES}",
+                                "draft": false,
+                                "prerelease": false
+                            }
+                        """
+                    )
+
+                    echo "GitHub release created: ${response.content}"
+                }
             }
         }
     }
 
     post {
-        always {
-            script {
-                echo "Cleaning up workspace after build..."
-                cleanWs() // Built-in Jenkins method to clean up the workspace
-            }
-        }
         success {
-            echo "Build succeeded for branch: ${env.BRANCH_NAME}"
+            echo "Pipeline executed successfully."
         }
         failure {
-            echo "Build failed for branch: ${env.BRANCH_NAME}"
+            echo "Pipeline failed."
         }
     }
 }
