@@ -24,44 +24,47 @@ pipeline {
         }
 
         stage('Determine Tag Version') {
-            steps {
-                script {
-                    // Fetch the latest tag and sanitize it
-                    def latestTag = sh(script: "git describe --tags `git rev-list --tags --max-count=1` || echo 'v0.0.0'", returnStdout: true).trim()
-                    def sanitizedTag = latestTag.replaceAll(/-[a-zA-Z0-9.-]+$/, '')
-                    def versionParts = sanitizedTag.replace('v', '').split('\\.')
-                    def major = versionParts[0].toInteger()
-                    def minor = versionParts[1].toInteger()
-                    def patch = versionParts[2].toInteger()
+    steps {
+        script {
+            // Fetch the latest tag and sanitize it
+            def latestTag = sh(script: "git describe --tags `git rev-list --tags --max-count=1` || echo 'v0.0.0'", returnStdout: true).trim()
+            def sanitizedTag = latestTag.replaceAll(/-[a-zA-Z0-9.-]+$/, '')
+            def versionParts = sanitizedTag.replace('v', '').split('\\.')
+            def major = versionParts[0].toInteger()
+            def minor = versionParts[1].toInteger()
+            def patch = versionParts[2].toInteger()
 
-                    if (env.BRANCH_NAME == 'master') {
-                        if (env.CHANGE_ID != null && env.CHANGE_TARGET == 'master') {
-                            echo "Pull request merged into master detected. Incrementing major version."
-                            major += 1
-                            minor = 0
-                            patch = 0
-                        } else if (currentBuild.getBuildCauses().any { it instanceof hudson.triggers.SCMTrigger$SCMTriggerCause }) {
-                            echo "Commit to master detected. Incrementing minor version."
-                            minor += 1
-                        }
-                    } else if (env.BRANCH_NAME.startsWith('hotfix/')) {
-                        echo "Hotfix branch detected. Incrementing patch version."
-                        patch += 1
-                    } else if (env.BRANCH_NAME.startsWith('feature/')) {
-                        echo "Feature branch detected. Using snapshot version."
-                        env.RELEASE_VERSION = "v${major}.${minor}.${patch}-${env.BRANCH_NAME.replaceAll('/', '-')}-SNAPSHOT"
-                        return
-                    } else {
-                        echo "Other branch detected. Using development version."
-                        env.RELEASE_VERSION = "v${major}.${minor}.${patch}-DEV"
-                        return
-                    }
+            // Unique identifier for -DEV or -SNAPSHOT tags
+            def uniqueSuffix = "${env.BUILD_NUMBER}-${sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()}"
 
-                    env.RELEASE_VERSION = "v${major}.${minor}.${patch}"
-                    echo "Determined release version: ${env.RELEASE_VERSION}"
+            if (env.BRANCH_NAME == 'master') {
+                if (env.CHANGE_ID != null && env.CHANGE_TARGET == 'master') {
+                    echo "Pull request merged into master detected. Incrementing major version."
+                    major += 1
+                    minor = 0
+                    patch = 0
+                } else if (currentBuild.getBuildCauses().any { it instanceof hudson.triggers.SCMTrigger$SCMTriggerCause }) {
+                    echo "Commit to master detected. Incrementing minor version."
+                    minor += 1
                 }
+            } else if (env.BRANCH_NAME.startsWith('hotfix/')) {
+                echo "Hotfix branch detected. Incrementing patch version."
+                patch += 1
+            } else if (env.BRANCH_NAME.startsWith('feature/') || env.BRANCH_NAME == 'testing') {
+                echo "Feature or testing branch detected. Using snapshot version."
+                env.RELEASE_VERSION = "v${major}.${minor}.${patch}-${env.BRANCH_NAME.replaceAll('/', '-')}-${uniqueSuffix}"
+                return
+            } else {
+                echo "Other branch detected. Using development version."
+                env.RELEASE_VERSION = "v${major}.${minor}.${patch}-DEV-${uniqueSuffix}"
+                return
             }
+
+            env.RELEASE_VERSION = "v${major}.${minor}.${patch}"
+            echo "Determined release version: ${env.RELEASE_VERSION}"
         }
+    }
+}
 
         stage('Generate Release Notes') {
             when {
