@@ -23,24 +23,7 @@ pipeline {
             }
         }
 
-        stage('Detect PR Merge to Master') {
-            when {
-                allOf {
-                    branch 'master'
-                    expression { return env.CHANGE_ID != null && env.CHANGE_TARGET == 'master' }
-                }
-            }
-            steps {
-                script {
-                    echo "Pull request merged into master detected."
-                }
-            }
-        }
-
         stage('Determine Tag Version') {
-            when {
-                branch 'master'
-            }
             steps {
                 script {
                     // Fetch the latest tag
@@ -50,36 +33,61 @@ pipeline {
                     def minor = versionParts[1].toInteger()
                     def patch = versionParts[2].toInteger()
 
-                    // Increment major version for PR merges
-                    echo "Incrementing major version for pull request merge."
-                    major += 1
-                    minor = 0
-                    patch = 0
+                    // Determine version based on branch and build cause
+                    if (env.BRANCH_NAME == 'master') {
+                        if (env.CHANGE_ID != null && env.CHANGE_TARGET == 'master') {
+                            // Pull request merged to master → Major version
+                            echo "Pull request merged into master detected. Incrementing major version."
+                            major += 1
+                            minor = 0
+                            patch = 0
+                        } else if (currentBuild.getBuildCauses().any { it instanceof hudson.triggers.SCMTrigger$SCMTriggerCause }) {
+                            // Commit to master → Minor version
+                            echo "Commit to master detected. Incrementing minor version."
+                            minor += 1
+                        }
+                    } else if (env.BRANCH_NAME.startsWith('hotfix/')) {
+                        // Increment patch version for hotfix branches
+                        echo "Hotfix branch detected. Incrementing patch version."
+                        patch += 1
+                    } else if (env.BRANCH_NAME.startsWith('feature/')) {
+                        // Snapshot version for feature branches
+                        echo "Feature branch detected. Using snapshot version."
+                        env.RELEASE_VERSION = "v${major}.${minor}.${patch}-${env.BRANCH_NAME.replaceAll('/', '-')}-SNAPSHOT"
+                        return
+                    } else {
+                        echo "Other branch detected. Using development version."
+                        env.RELEASE_VERSION = "v${major}.${minor}.${patch}-DEV"
+                        return
+                    }
 
                     // Set the release version
                     env.RELEASE_VERSION = "v${major}.${minor}.${patch}"
-                    echo "Determined major version: ${env.RELEASE_VERSION}"
+                    echo "Determined release version: ${env.RELEASE_VERSION}"
                 }
             }
         }
 
-        stage('Tag and Push Major Version') {
-            when {
-                branch 'master'
-            }
+        stage('Tag and Push') {
             steps {
                 script {
-                    echo "Tagging master branch with version ${env.RELEASE_VERSION}"
+                    echo "Tagging branch ${env.BRANCH_NAME} with version ${env.RELEASE_VERSION}"
 
                     // Configure Git user
                     sh """
                         git config user.name "Jenkins CI"
                         git config user.email "jenkins@example.com"
-                        git tag -a ${env.RELEASE_VERSION} -m "Major version release ${env.RELEASE_VERSION}"
+                        git tag -a ${env.RELEASE_VERSION} -m "Tagging branch ${env.BRANCH_NAME} with version ${env.RELEASE_VERSION}"
                         git push origin ${env.RELEASE_VERSION}
                     """
-                    echo "Major version tag ${env.RELEASE_VERSION} pushed successfully."
+                    echo "Tag ${env.RELEASE_VERSION} pushed for branch ${env.BRANCH_NAME}"
                 }
+            }
+        }
+
+        stage('Build and Test') {
+            steps {
+                echo "Running build and tests for branch: ${env.BRANCH_NAME}"
             }
         }
     }
