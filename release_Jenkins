@@ -8,13 +8,14 @@ pipeline {
         SUCCESS_RECIPIENTS = "group1@example.com,group2@example.com"
         TEAMS_WEBHOOK = credentials('teams-webhook') // Jenkins credential for Teams webhook URL
         TEAMS_ICON_URL = "https://example.com/jenkins-icon.png" // Replace with your custom icon URL
+        GITHUB_TOKEN = credentials('github-token') // Personal Access Token for GitHub API
     }
 
     stages {
         stage('Checkout Code') {
             steps {
                 checkout([$class: 'GitSCM',
-                          branches: [[name: "${env.GIT_BRANCH}"]],
+                          branches: [[name: "${env.BRANCH_NAME}"]],
                           userRemoteConfigs: [[url: "${env.GIT_REPO}"]]])
             }
         }
@@ -29,24 +30,72 @@ pipeline {
                     def patch = versionParts[2].toInteger()
 
                     if (env.BRANCH_NAME == MASTER_BRANCH) {
-                        // Determine major or minor release based on trigger type
                         if (currentBuild.getBuildCauses().any { it instanceof hudson.triggers.SCMTrigger$SCMTriggerCause }) {
-                            minor += 1 // Commit: Minor version
+                            minor += 1 // Increment minor version for commits
                         } else {
-                            major += 1 // Push: Major version
+                            major += 1 // Increment major version for push
                             minor = 0
                             patch = 0
                         }
-                        env.RELEASE_VERSION = "v${major}.${minor}.${patch}"
+                    } else if (env.BRANCH_NAME.startsWith("hotfix/")) {
+                        patch += 1 // Increment patch version
                     } else if (env.BRANCH_NAME.startsWith("feature/")) {
-                        // Feature branch: Use snapshot version
                         env.RELEASE_VERSION = "v${major}.${minor}.${patch}-SNAPSHOT"
+                        return
                     } else {
-                        // Other branches: Default versioning
                         env.RELEASE_VERSION = "v${major}.${minor}.${patch}-DEV"
+                        return
                     }
 
-                    echo "Release version determined: ${env.RELEASE_VERSION}"
+                    env.RELEASE_VERSION = "v${major}.${minor}.${patch}"
+                    echo "Determined release version: ${env.RELEASE_VERSION}"
+                }
+            }
+        }
+
+        stage('Tag and Push') {
+            when {
+                expression { env.BRANCH_NAME == MASTER_BRANCH } // Only tag master branch
+            }
+            steps {
+                script {
+                    echo "Tagging repository with version ${env.RELEASE_VERSION}"
+                    sh """
+                        git config user.name "Jenkins"
+                        git config user.email "jenkins@example.com"
+                        git tag -a ${env.RELEASE_VERSION} -m "Release ${env.RELEASE_VERSION}"
+                        git push origin ${env.RELEASE_VERSION}
+                    """
+                    echo "Tag pushed: ${env.RELEASE_VERSION}"
+                }
+            }
+        }
+
+        stage('Create GitHub Release') {
+            when {
+                expression { env.BRANCH_NAME == MASTER_BRANCH } // Only create release for master
+            }
+            steps {
+                script {
+                    echo "Creating GitHub release for version ${env.RELEASE_VERSION}"
+                    def changelog = sh(script: "git log -1 --pretty=format:'%h %s (%an)'", returnStdout: true).trim()
+
+                    httpRequest(
+                        httpMode: 'POST',
+                        url: "https://api.github.com/repos/your-organization/your-repository/releases",
+                        customHeaders: [[name: 'Authorization', value: "Bearer ${env.GITHUB_TOKEN}"]],
+                        contentType: 'APPLICATION_JSON',
+                        requestBody: """
+                            {
+                                "tag_name": "${env.RELEASE_VERSION}",
+                                "name": "Release ${env.RELEASE_VERSION}",
+                                "body": "${changelog}",
+                                "draft": false,
+                                "prerelease": false
+                            }
+                        """
+                    )
+                    echo "GitHub release created for version ${env.RELEASE_VERSION}"
                 }
             }
         }
@@ -109,48 +158,6 @@ pipeline {
                     mimeType: 'text/html',
                     to: "${FAILURE_RECIPIENTS}"
                 )
-            }
-        }
-    }
-}
-
-// Function to send a message to Microsoft Teams with retry logic
-def sendTeamsNotification(String message) {
-    def maxRetries = 3
-    def retryDelay = 5 // seconds
-    def retryCount = 0
-    def success = false
-
-    while (retryCount < maxRetries && !success) {
-        try {
-            // Send the Teams notification
-            httpRequest(
-                httpMode: 'POST',
-                url: "${env.TEAMS_WEBHOOK}",
-                contentType: 'APPLICATION_JSON',
-                requestBody: """
-                    {
-                        "text": "${message}",
-                        "themeColor": "0076D7",
-                        "summary": "Jenkins Notification",
-                        "sections": [{
-                            "activityTitle": "Jenkins Notification",
-                            "activitySubtitle": "Triggered by Jenkins Pipeline",
-                            "activityImage": "${env.TEAMS_ICON_URL}",
-                            "text": "${message}"
-                        }]
-                    }
-                """
-            )
-            success = true
-        } catch (Exception e) {
-            retryCount++
-            if (retryCount < maxRetries) {
-                echo "Teams notification failed. Retrying in ${retryDelay} seconds... (Attempt ${retryCount} of ${maxRetries})"
-                sleep(retryDelay)
-            } else {
-                echo "Failed to send Teams notification after ${maxRetries} attempts."
-                error("Teams notification failed: ${e.message}")
             }
         }
     }
