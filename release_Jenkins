@@ -26,9 +26,16 @@ pipeline {
         stage('Determine Tag Version') {
             steps {
                 script {
-                    // Fetch the latest tag
+                    // Fetch the latest tag and sanitize it
                     def latestTag = sh(script: "git describe --tags `git rev-list --tags --max-count=1` || echo 'v0.0.0'", returnStdout: true).trim()
-                    def versionParts = latestTag.replace('v', '').split('\\.')
+                    echo "Latest tag fetched: ${latestTag}"
+
+                    // Sanitize the tag to remove non-numeric parts (e.g., -DEV or -SNAPSHOT)
+                    def sanitizedTag = latestTag.replaceAll(/-[a-zA-Z0-9.-]+$/, '')
+                    echo "Sanitized tag: ${sanitizedTag}"
+
+                    // Split sanitized version string into parts
+                    def versionParts = sanitizedTag.replace('v', '').split('\\.')
                     def major = versionParts[0].toInteger()
                     def minor = versionParts[1].toInteger()
                     def patch = versionParts[2].toInteger()
