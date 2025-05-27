@@ -1,223 +1,88 @@
-Got it — you’re aiming for clear, beginner-friendly documentation, suitable even for people without prior Jenkins, Maven, or DevOps background. Below is the revised version of the Jenkins pipeline documentation with simple, plain-English explanations for each section and stage.
-
-This is optimized for Confluence, and you can further enhance it with visuals or collapsible sections if needed.
+Here is a structured and professional document based on the information you provided:
 
 ⸻
 
-🔧 Jenkins Pipeline Setup – Beginner-Friendly Documentation
+Deployment Tool Documentation
+
+Overview
+
+The deployment tool is composed of three primary components that work in conjunction to automate the deployment of applications. These components are:
+	1.	Package Work Item (Package WI)
+	2.	Release Configuration
+	3.	Release Work Item (Release WI)
+
+Each component plays a critical role in the packaging, configuration, and deployment process.
 
 ⸻
 
-1. 🚀 What Is This?
+1. Package Work Item (Package WI)
 
-This document explains how our automated build and deployment system works using Jenkins.
-It helps developers and teams:
-	•	Validate code before merging
-	•	Automatically build and test code
-	•	Deploy code and configurations to different environments
-	•	Reduce manual steps and avoid human error
+The Package WI is responsible for retrieving the application package from Nexus and preparing it for deployment.
 
-You don’t need to know Jenkins or Maven to understand this guide — we’ll explain each part in plain English.
+Key Inputs:
+	•	Artifact Name: Must match the artifact name defined in the Release Configuration Item.
+	•	Version: Specifies the version of the artifact.
+	•	Path: URL or link to the artifact stored in Nexus.
 
-⸻
-
-2. 🖥️ Custom Jenkins Agent
-
-Jenkins runs on a custom machine (called an “agent”) to execute tasks.
-
-✅ To start the agent:
-	1.	Log in to the server where the agent is installed.
-	2.	Run the startup script using the user account: xxxx.
-
-If you don’t have access, please contact the infrastructure team to do it for you.
+Functionality:
+	•	Downloads the specified package from Nexus.
+	•	Zips the package.
+	•	Stores the zipped package on the G3 server (assumption based on current process).
 
 ⸻
 
-3. 📋 Jenkins Jobs Page
+2. Release Configuration
 
-All of our projects have jobs set up in Jenkins. Each job is linked to a Git repository.
-	•	Jobs are created as multi-branch pipelines, which means Jenkins automatically runs tests/builds when new code is pushed to a branch or pull request is created.
+The Release Configuration defines all instructions and variables required for deployment. It is automatically created or updated via Jenkins for each application.
 
-🔗 Use this link to view all jobs: Jenkins Jobs Page
-📄 To learn how to create a new job/repo: Repository & Pipeline Creation Guide
+Components:
 
-⸻
+a. Deploy Config XML
+	•	Acts as the master configuration.
+	•	Outlines all the deployment steps and structure.
 
-4. 🧠 What the Jenkins Pipeline Does (Big Picture)
+b. Server Properties
+	•	Contains environment-specific variables for target servers.
+	•	Includes details such as IP addresses, ports, and other server-level parameters.
 
-When you push code or open a pull request, Jenkins automatically:
-	1.	Checks if everything is named and versioned correctly.
-	2.	Builds the project (if applicable).
-	3.	Uploads it to Nexus (a storage for code packages).
-	4.	If it’s a release or deployment trigger, it may:
-	•	Deploy to testing (UAT) or production environments
-	•	Create and manage release versions automatically
+c. Application Properties
+	•	Stores environment-specific application variables.
+	•	Includes settings such as application names, context paths, and other app-specific values.
 
-Configuration data like project IDs (PAPs) is stored in a file called server.yaml. If your project is new and missing there, contact the integration team to get it added.
-
-⸻
-
-5. 🧱 Step-by-Step Stages Explained (In Simple Terms)
+d. Playbook YAML
+	•	Defines the playbooks used during deployment.
+	•	Lists steps or tasks which are referenced by the Deploy Config XML.
 
 ⸻
 
-🟢 1. Initialize
+3. Release Work Item (Release WI)
 
-This step figures out what’s happening:
-	•	Is this a pull request (PR), or a merge into the main branch?
-	•	It checks out your code from Git.
-	•	Finds the project name from a file called pom.xml.
-	•	If it’s a special ITX project, it also pulls in extra files required for building.
+The Release WI is created to execute the deployment based on the Release Configuration.
 
-⸻
+Key Inputs:
+	•	Release Configuration Reference: Points to the specific Release Configuration for the application.
+	•	Release Configuration Variables: Passed in JSON format, specifying environment details (e.g., integration server).
+	•	Package: Refers to the associated Package WI.
 
-🟡 2. Capture Trigger Info
-
-This step collects details about who triggered the build:
-	•	Developer’s name and email
-	•	If it’s a release build (e.g., deploying to UAT or production):
-	•	It sets the right environment
-	•	Finds and checks out the most recent version of the code
+Functionality:
+	•	Once created, the Release WI is saved, locked, and scheduled for test.
+	•	A new release is initiated, enabling monitoring of task status and logs.
 
 ⸻
 
-🔵 3. Validation
+Build Execution Note
 
-Before building, Jenkins does some checks to avoid problems later:
-	•	PR title must contain a JIRA ticket ID (like ABC-123)
-	•	Project version must match naming rules (e.g., v1.0.0 on release/v1)
-	•	Makes sure your project depends on the latest tools/libraries
-	•	If not, it sends you an email with what needs updating and stops the build
-
-⸻
-
-🧪 Optional – Build JUnit Project
-
-Used only for internal testing libraries. It builds test components needed for other projects to run automated tests.
+If a Jenkins build runs for more than 30 minutes:
+	1.	Check the status of the deployment task.
+	2.	If the task has already completed, request the administrators to forcefully complete the release.
+	3.	This ensures the Jenkins pipeline can finish successfully and avoids unnecessary build failures.
 
 ⸻
 
-6. 🔄 Different Types of Projects and What Happens
+Summary
+
+The deployment tool efficiently packages, configures, and deploys applications through an automated pipeline. Understanding the interaction between the Package WI, Release Configuration, and Release WI ensures smoother operations and easier troubleshooting during deployments.
 
 ⸻
 
-📦 Java Projects
-
-If your project contains regular Java code:
-	•	Jenkins builds it using Maven (mvn install)
-	•	Then it uploads the built files to Nexus (mvn deploy)
-	•	But if you clicked “build manually”, Jenkins will skip the build and just log the run.
-
-⸻
-
-🧩 Shared Libraries / ACE Applications
-
-If your project builds integration components (used in messaging systems like ACE):
-	1.	Jenkins builds a BAR file (packaged deployable unit).
-	2.	It zips the file and uploads it to Nexus.
-	3.	If you’re manually running the build, Jenkins skips building and just pulls the latest version from Nexus.
-	4.	For ACE apps, Jenkins also adds .properties files for all environments inside the zip.
-
-⸻
-
-📚 ITX Projects (IBM Transformation Extender)
-
-These are specialized projects used for data mapping and transformation.
-	1.	Jenkins finds all the mapping files (called “ITX maps”).
-	2.	It compiles them using a tool called mcompile.
-	3.	Then it zips everything and uploads it to Nexus.
-	4.	If run manually, Jenkins skips all that and fetches the last uploaded version.
-
-⸻
-
-🧱 POM Projects
-
-These are not real projects with code but rather “parent” projects that other ones inherit settings from.
-	•	Jenkins simply builds and uploads them — no extra logic involved.
-
-⸻
-
-⚙️ Configuration Deployments (e.g., Runtime JARs)
-
-These projects are used to deploy runtime files like JARs needed for the environment.
-	•	If auto-triggered, Jenkins:
-	•	Builds the project
-	•	Collects all JARs
-	•	Zips and uploads them
-	•	If run manually, Jenkins just fetches the last uploaded version from Nexus.
-
-⸻
-
-7. 📦 Deployment Using B3
-
-B3 is our deployment tool for pushing code to real environments.
-
-⸻
-
-Step 1: Login to B3
-	•	Jenkins logs in to B3 and gets authentication cookies for deployment.
-
-⸻
-
-Step 2: If Environment is NOT UAT
-
-- Create Packages
-	•	Jenkins creates a “Work Item” (WI) in B3 for each component to be deployed.
-
-- Check Package Status
-	•	It waits until all deployment packages are ready.
-
-⸻
-
-Step 3: If the branch is not “STD” or a release branch
-
-- Create Release & Deploy
-	•	Jenkins creates a release in B3 and checks if the environment is ready.
-	•	It ensures no other deployment is locking the environment.
-
-- Check Release Status
-	•	Verifies that all components are deployed successfully.
-	•	If any fail, the pipeline fails too.
-
-⸻
-
-8. 🔁 Automatic Release Version Creation (When Merging to main)
-
-When you merge to the main branch:
-	1.	Jenkins runs mvn release:prepare, which:
-	•	Updates all version numbers to the release version.
-	•	Commits and creates a Git tag.
-	2.	Then it updates to the next development version and commits again.
-
-These changes trigger the pipeline again to process the new version.
-
-⸻
-
-9. 🆘 Who to Contact
-
-Topic	Contact
-Agent issues or start-up	@InfrastructureTeam
-Adding missing project to config	@IntegrationTeam
-Build or pipeline failure	@CI/CDSupportTeam
-Deployment (B3) issues	@DeploymentOps
-
-
-⸻
-
-✅ Summary
-
-This pipeline:
-	•	Automatically checks your code
-	•	Builds and tests your projects
-	•	Deploys them when ready
-	•	Works differently depending on project type
-	•	Avoids manual steps and reduces mistakes
-
-⸻
-
-Would you like me to generate:
-	•	✅ A downloadable Markdown or Word version?
-	•	✅ A pipeline flow diagram?
-	•	✅ A Confluence native format (with panels/macros)?
-
-Let me know how you’d like to use this!
+Let me know if you’d like this exported to a PDF or formatted in another style (e.g., for Confluence or SharePoint).
